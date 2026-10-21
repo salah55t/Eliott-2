@@ -1,0 +1,194 @@
+services:
+  - type: web
+    name: eliott-plus-2
+    runtime: python
+    plan: free
+    region: frankfurt   # [FE1.0.1] أوروبا — باينانس يعمل من فرانكفورت (حظر 451 الجغرافي يخص عناوين أمريكا فقط)
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python vnz.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # وضع ورقي افتراضي — مفاتيح باينانس مطلوبة فقط لزر التداول الحقيقي [FE1.4.0]
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      # [FE1.4.0] التداول الحقيقي: "1" يجعل الأوامر على تيستنت باينانس (اختباري آمن)
+      - key: BINANCE_TESTNET
+        value: "0"
+      # [FE1.4.0] سقف أمان: أقصى قيمة USDT لأمر الشراء الحقيقي الواحد
+      - key: REAL_MAX_NOTIONAL_USDT
+        value: "50"
+      # حماية اللوحة (admin/test123 مثل المشروع السابق)
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # اختياري: قاعدة بيانات دائمة — بدونها يعمل SQLite محليًا (يفقد البيانات عند إعادة النشر)
+      - key: DATABASE_URL
+        sync: false
+      # اختياري: إشعارات تلجرام
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # إعدادات الاستراتيجية — فريم الكشف 15m بأصلين:
+      # 1) طلب المستخدم («اريد تغيير الفريم الفحص الى 15 دقيقة بدل الساعة»)
+      # 2) جدول معايرة المؤلف (engine/pattern_detector.py): 15m = 0.004–0.008 و«Primary entry TF»
+      #    الانعكاس 0.006 يقع في منتصف نطاق 15م — دون تغيير
+      - key: DEVIATION_THRESHOLD
+        value: "0.006"
+      - key: SIGNAL_TIMEFRAME
+        value: "15m"
+      - key: ENTRY_TIMEFRAME
+        value: "15m"
+      - key: MAX_OPEN_TRADES
+        value: "5"   # [طلب المستخدم 2026-10-12] رفع حد الأوامر النشطة (معلقة + مفتوحة) من 3 إلى 5
+      - key: RISK_PCT_PER_TRADE
+        value: "1.0"
+      - key: PENDING_MAX_CANDLES
+        value: "6"   # [FE1.8.3] 6 شموع (1.5س على 15m) بدل 3 — صلاحية أطول للأمر المعلق يرفع فرص الامتلاء
+      - key: PAPER_BALANCE
+        value: "10000"
+      # [FE1.0.1] سلسلة مزودي البيانات: باينانس أولًا ثم البدائل آليًا عند حظر/فشل باينانس
+      # (عنوان الخروج المشترك لخدمات Render يُحظر من باينانس -1003 دوريًا بسبب الخدمات الأخرى)
+      - key: DATA_PROVIDERS
+        value: "binance,bybit,okx,gate"
+      - key: PROVIDER_COOLDOWN_SEC
+        value: "900"
+      # [FE1.8.7] اقتباس طبقة الاتصال من بوت V9: الشموع عبر طلبات خام مباشرة —
+      # bybit→okx→gate أولًا (requests بلا ccxt وبلا أسواق) وباينانس احتياط أخير
+      # خلف حارس وزن تكيفي (ميزانية/دقيقة تنخفض 40% عند الحظر وتتعافى 8%/3د).
+      # DATA_FEED_RAW=0 يعيد مسار ccxt القديم كاملًا (قاتل الطوارئ).
+      - key: DATA_FEED_RAW
+        value: "1"
+      - key: DATA_FEED_ORDER
+        value: "bybit,okx,gate"
+      - key: DATA_FEED_TIMEOUT_SEC
+        value: "8"
+      - key: DATA_FEED_FAIL_THRESHOLD
+        value: "4"
+      - key: DATA_FEED_COOLDOWN_SEC
+        value: "300"
+      - key: RATE_LIMIT_BUDGET_PER_MIN
+        value: "500"
+      - key: API_MIN_SPACING_SEC
+        value: "0.15"
+      - key: BAN_RESUME_COOLDOWN_SEC
+        value: "90"
+      - key: BAN_RESUME_RAMP_SEC
+        value: "120"
+      - key: BAN_LONG_THRESHOLD_SEC
+        value: "600"
+      # [FE1.2.0] الأسعار الحية من ويب سوكت (ccxt.pro) — REST احتياطًا فقط عند تقادم التيار
+      - key: WS_ENABLED
+        value: "1"
+      - key: WS_STALE_SEC
+        value: "90"
+      - key: WS_SYNC_INTERVAL
+        value: "10"
+      - key: WS_RECV_TIMEOUT_SEC
+        value: "60"
+      # [FE1.5.0] ماسح الكون الكامل — فحص أولي لكل أزواج باينانس USDT الملائمة
+      # للاستراتيجية (سيولة/سبريد/مدى ثم زيجزاج 15m بعتبة الاستراتيجية) — أعلى
+      # النتائج تُطبق تلقائيًا على قائمة المراقبة بدل القائمة اليدوية الثابتة.
+      # الوزن الكلي منخفض جدًا (~160 نقطة باينانس لكل فحص) — آمن ضد حظر 418/429.
+      - key: SCAN_UNIVERSE_ENABLED
+        value: "1"
+      - key: SCAN_INTERVAL_SEC
+        value: "21600"   # فحص كامل كل 6 ساعات (فحص أول بعد 90 ثانية من الإقلاع)
+      - key: SCAN_TOP_N
+        value: "30"      # [FE1.8.4] 30 زوجًا بدل 20 — قائمة أوسع ترفع فرص بنيات صاعدة حية (الحمل الزائد مهمل: شموع تُحرر بعد كل رمز)
+      - key: SCAN_CANDIDATES
+        value: "40"      # كم مرشحًا (الأعلى سيولة) يُحلَّل بشموع 15m
+      - key: SCAN_MIN_VOLUME_USDT
+        value: "5000000" # سيولة 24h أدنى (5 مليون $)
+      - key: SCAN_MAX_SPREAD_PCT
+        value: "0.15"    # أقصى فرق bid/ask %
+      - key: SCAN_MIN_RANGE_PCT
+        value: "2.0"     # أدنى مدى 24h % — الموجات تحتاج حركة
+      - key: SCAN_KLINES_LIMIT
+        value: "200"     # شموع 15m لكل مرشح (وزن باينانس 2 فقط لكل نداء)
+      - key: IDLE_RESCAN_MIN_GAP_SEC
+        value: "2700"    # [FE1.8.4] أدنى فجوة بين إعجالات الفحص عند موت قائمة الكشف — دورة بلا بنيات حية ولا صفقات توقظ الفحص بدل انتظار 6 ساعات
+      # [FE1.6.0] اقتباسات ElliottWavesEngine — جودة الإشارات والأهداف:
+      # قواعد R1/R3 واعية بالذيل + فضاء لوغاريتمي + أرضية تناسبية للأمواج
+      # + سلّم أهداف احتمالي + تقييم مركب + بوابة تحيز الفريم الأعلى
+      - key: WAVE_MIN_PROPORTION
+        value: "0.15"    # كل موجة دافعة ≥ 15% من الحركة الأمومية (0 يعطل)
+      - key: TP_LADDER_ENABLED
+        value: "1"       # سلّم أهداف W5 (W5=W1 ← 0.618×W3 ← 1.618 احتياطي)
+      - key: TP_MIN_RR
+        value: "0.5"     # أدنى R:R لقبول هدف من السلّم — وإلا بقي 1.618 (الوقف البنيوي يجعل R:R النموذجي 0.5-0.8)
+      - key: HTF_BIAS_ENABLED
+        value: "1"       # رفض الإشارات الصاعدة في حقبة هابطة واضحة على اليومي
+      - key: HTF_BIAS_TIMEFRAME
+        value: "1d"      # فريم التحيز الأعلى (يوجّه 15m)
+      - key: HTF_BIAS_CACHE_SEC
+        value: "14400"   # كاش التحيز 4 ساعات — وزن REST مهمل
+      # [FE1.7.0] بوابات جودة القبول — دروس أول صفقات حية (8/9 مطاردة، 3/9 إعادة حرفية، هدف مُحقق مسبقًا)
+      - key: MAX_ENTRY_DISTANCE_PCT
+        value: "1.5"     # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
+      - key: MAX_STRUCTURE_AGE_BARS
+        value: "36"      # [FE1.8.5] 36 شمعة (9س) بدل 30 — إثبات حي FE1.8.4: 43 رفض تقادم مرت كلها بوابة الفرضية الحية أولًا؛ premise-alive والمطاردة يحميان
+      - key: SYMBOL_COOLDOWN_SEC
+        value: "5400"    # تبريد الرمز 90 دقيقة بعد انتهاء/إلغاء أمر معلق — لا إعادة إنشاء حرفية (0 يعطل)
+      - key: CLUSTER_MAX_SAME_DIRECTION
+        value: "3"       # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
+      # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بـ2.5× الرصيد (رافعة ضمنية)
+      - key: PAPER_MAX_POSITION_PCT
+        value: "30"      # سقف قيمة المركز الواحد % من الرصيد الورقي — يُقلّص الحجم لا يرفضه (0 يعطل)
+      - key: PAPER_MAX_TOTAL_PCT
+        value: "100"     # سقف مجموع قيم المراكز النشطة % من الرصيد (0 يعطل)
+      # [FE1.7.0] حارس انقطاع التغذية مع مواضع مفتوحة — كان فشل الجلب صامتًا والوقف بلا فحص
+      - key: OUTAGE_ALERT_AFTER_CYCLES
+        value: "3"       # تنبيه تلجرام/لوحة بعد 3 دورات مراقبة فاشلة متتالية (≈3 دقائق)
+      - key: OUTAGE_RENOTIFY_SEC
+        value: "900"     # تكرار التنبيه كل 15 دقيقة طوال الانقطاع
+      # [FE1.3.0] البقاء الحي — نبضة ذاتية إلى /health العام كل دقيقة [FE1.8.3: 60ث بدل 600ث بطلب المستخدم]
+      # (القديم: نبضة كل 14 دقيقة بلا إعادة محاولة — أي فشل عابر واحد كان يسمح بالنوم)
+      # الهدف يُشتق تلقائيًا من RENDER_EXTERNAL_URL الذي يحقنه Render — وKEEP_ALIVE_URL/PANEL_URL تجاوزان اختياريان
+      - key: KEEP_ALIVE_ENABLED
+        value: "1"
+      - key: KEEP_ALIVE_INTERVAL_SEC
+        value: "60"
+      # [FE1.3.1] حمية الذاكرة ضد أعطال OOM (السقف 512MB): أسواق كسولة + تقليم + gc تلقائي
+      # MALLOC_ARENA_MAX يقلل تجزئة ذاكرة glibc مع الخيوط المتعددة (يُقرأ عند بدء العملية)
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: MEM_GC_THRESHOLD_MB
+        value: "360"
+      - key: MEM_CRITICAL_MB
+        value: "440"
+      # [EL2.0.0] الاستراتيجيات المتوازية — سكالب CVD + بروفايل القيمة جنبًا إلى جنب مع الموجات
+      - key: SCALP_ENABLED
+        value: "1"
+      - key: SCALP_S1_ENABLED
+        value: "1"       # انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة
+      - key: SCALP_S2_ENABLED
+        value: "1"       # ارتداد القيمة: Volume Profile + امتصاص CVD + فيبو
+      - key: SCALP_EXEC_TF
+        value: "5m"
+      - key: SCALP_SYMBOLS_N
+        value: "8"       # عدد الرموز من قائمة المراقبة (أو SCALP_SYMBOLS قائمة صريحة)
+      - key: SCALP_RISK_PCT
+        value: "0.75"
+      - key: SCALP_MAX_NOTIONAL_USDT
+        value: "1200"
+      - key: SCALP_MAX_NOTIONAL_PCT
+        value: "30"
+      - key: SCALP_MAX_TOTAL_OPEN
+        value: "2"       # سقف صفقات السكالب المفتوحة معًا — البقية لموجات إليوت
+      - key: SCALP_COOLDOWN_SEC
+        value: "2700"
+      - key: SCALP_DAILY_LOSS_PCT
+        value: "0.6"
+      - key: SCALP_MAX_HOLD_MIN
+        value: "90"
+      - key: SCALP_PARTIAL_PCT
+        value: "50"
+      - key: SCALP_RR_NET_MIN
+        value: "0.3"

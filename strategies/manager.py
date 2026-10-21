@@ -1,0 +1,724 @@
+# -*- coding: utf-8 -*-
+"""مدير الاستراتيجيات المتوازية — Eliott+2
+==========================================
+شغّلان مستقلان (خيوط) بجانب محرك موجات إليوت دون أي مساس:
+  • scalp-scan     — بعد إغلاق كل شمعة 5m: بناء سياق الرموز + تقييم الاستراتيجيتان
+                     + البوابات المشتركة + فتح الصفقات + الخروج المبكر (شمعة مغلقة).
+  • scalp-monitor  — كل 20ث: وقف-أولًا intrabar + جزئي 50% عند TP1 + BE + TP2
+                     + تتبع القمة + مهلة الصفقة. (نفس عقائد الحماية المحمية للمحرك).
+
+عقد المضيف (حقن كامل — هذه الحزمة لا تستورد vnz.py إطلاقًا):
+  attach_host({
+    "db_query"(sql, params) / "db_execute"(sql, params),
+    "log_and_notify"(level, msg, ntype), "logger",
+    "get_live_price"(symbol), "get_recent_candles"(symbol, tf, limit, min_candles),
+    "fetch_ohlcv_raw"(symbol, tf, limit) -> (rows6, source),
+    "binance_full_klines"(symbol, interval, limit) -> raw12 | None,
+    "binance_depth"(symbol, limit) -> {"bids":..,"asks":..} | None,
+    "utc_now_iso", "fmt_price", "seconds_until_next_candle"(tf),
+    "is_trading_enabled"() -> bool, "risk_entry_block_reason"() -> str|None,
+    "symbol_has_active"(symbol) -> bool,
+    "get_paper_balance"(), "fee_rate", "deviation_threshold",
+    "zigzag_pivots"(closes, deviation) -> [(idx, price)],
+    "close_signal_row"(sig, price, reason), "close_real_trade"(sig, price, reason),
+    "account_partial_close"(sig, leg_qty, price, reason),
+    "place_real_market_sell"(symbol, qty), "place_real_stop_loss"(symbol, qty, stop),
+    "replace_real_stop"(sig, new_stop), "cancel_real_order"(ex, symbol, oid),
+    "real_market_buy"(symbol, quote_usdt) -> order|None, "real_free_usdt"(),
+    "real_max_notional"() -> float, "real_adjust_amount"(ex, symbol, qty),
+    "real_min_amount"(mkt), "real_min_cost"(mkt), "real_market_rules"(symbol, ex),
+    "binance_trade_exchange"(), "watchlist"() -> [symbols],
+  })
+"""
+
+import json
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from .base import SCALP_CONFIG, ScalpConfig, ScalpContext, ScalpSignal
+from . import indicators as ind
+from .flow_ignition import FlowIgnition
+from .profile_reversion import ProfileReversion
+
+
+def _flag(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().lower() not in ("0", "false", "no", "off")
+
+
+SCALP_ENABLED = _flag("SCALP_ENABLED")
+S1_ENABLED = _flag("SCALP_S1_ENABLED")
+S2_ENABLED = _flag("SCALP_S2_ENABLED")
+
+STRATEGY_NAMES = ("SCALP_FLOW", "SCALP_PROFILE")
+
+HOST: Dict[str, Any] = {}
+_lock = threading.RLock()
+_started = False
+_state: Dict[str, Any] = {"boot_at": None, "last_scan_at": None, "last_scan_ts": 0.0,
+                          "cycles": 0, "last_error": "", "cvd_source_last": ""}
+_counters: Dict[str, Dict[str, Any]] = {
+    n: {"signals": 0, "partials": 0, "early_exits": 0, "closes": {}, "rejects": {},
+        "last_signal_at": None, "last_signal_symbol": None}
+    for n in STRATEGY_NAMES
+}
+_cooldowns: Dict[str, Dict[str, float]] = {n: {} for n in STRATEGY_NAMES}
+
+_instances: Dict[str, Any] = {}
+
+
+def attach_host(host: Dict[str, Any]) -> None:
+    """حقن اعتماديات المضيف (vnz يبنيها عند الإقلاع — الاختبارات تبني بدائل)."""
+    global HOST
+    HOST = dict(host or {})
+    cfg = SCALP_CONFIG
+    _instances.clear()
+    if S1_ENABLED:
+        _instances["SCALP_FLOW"] = FlowIgnition(cfg)
+    if S2_ENABLED:
+        _instances["SCALP_PROFILE"] = ProfileReversion(cfg)
+    _state["boot_at"] = time.time()
+
+
+def _hf(key: str, *a, **kw):
+    fn = HOST.get(key)
+    if fn is None:
+        return None
+    try:
+        return fn(*a, **kw)
+    except Exception:
+        lg = HOST.get("logger")
+        if lg:
+            lg.warning("[سكالب] فشل استدعاء المضيف %s", key, exc_info=True)
+        return None
+
+
+def _bump(strategy: str, key: str, sub: Optional[str] = None) -> None:
+    with _lock:
+        c = _counters.setdefault(strategy, {"signals": 0, "partials": 0, "early_exits": 0,
+                                            "closes": {}, "rejects": {},
+                                            "last_signal_at": None, "last_signal_symbol": None})
+        if sub is None:
+            c[key] = c.get(key, 0) + 1
+        else:
+            c[key] = c.setdefault(key, {})
+            c[key][sub] = c[key].get(sub, 0) + 1
+
+
+def _reject(strategy: str, reason: str) -> None:
+    _bump(strategy, "rejects", reason)
+
+
+def _log(level: str, msg: str, ntype: str) -> None:
+    _hf("log_and_notify", level, msg, ntype)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الرموز والتبريد والمخاطر اليومية
+# ─────────────────────────────────────────────────────────────────────────────
+
+def resolve_symbols() -> List[str]:
+    env = (os.getenv("SCALP_SYMBOLS", "") or "").strip()
+    if env:
+        out = []
+        for s in env.split(","):
+            s = s.strip().upper()
+            if not s:
+                continue
+            if "/" not in s:
+                s += "/USDT"
+            out.append(s)
+        return out[:16]
+    wl = _hf("watchlist") or []
+    usdt = [s for s in wl if str(s).upper().endswith("/USDT")]
+    return usdt[: max(1, SCALP_CONFIG.symbols_n)]
+
+
+def _cooldown_set(strategy: str, symbol: str) -> None:
+    with _lock:
+        _cooldowns.setdefault(strategy, {})[symbol] = time.time()
+
+
+def _cooldown_left(strategy: str, symbol: str) -> float:
+    with _lock:
+        ts = _cooldowns.get(strategy, {}).get(symbol, 0.0)
+    rem = SCALP_CONFIG.cooldown_sec - (time.time() - ts)
+    return max(0.0, rem)
+
+
+def _scalp_open_count(strategy: Optional[str] = None) -> int:
+    if strategy:
+        rows = _hf("db_query", "SELECT COUNT(*) AS n FROM signals WHERE status='open'"
+                                " AND strategy_name=%s", (strategy,)) or []
+    else:
+        rows = _hf("db_query", "SELECT COUNT(*) AS n FROM signals WHERE status='open'"
+                                " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE')") or []
+    return int(rows[0]["n"]) if rows else 0
+
+
+def _utc_day_prefix() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _daily_pnl(strategy: str) -> float:
+    rows = _hf("db_query", "SELECT COALESCE(SUM(pnl_usdt),0) AS s FROM signals"
+                            " WHERE strategy_name=%s AND status='closed' AND closed_at LIKE %s",
+               (strategy, _utc_day_prefix() + "%")) or []
+    try:
+        return float(rows[0]["s"] or 0.0)
+    except (IndexError, TypeError, ValueError):
+        return 0.0
+
+
+def _daily_loss_block(strategy: str) -> bool:
+    """قاطع خسارة يومي لكل استراتيجية — نسبة من الرصيد الورقي (أو الحقيقي)."""
+    cap_pct = SCALP_CONFIG.daily_loss_pct
+    if cap_pct <= 0:
+        return False
+    base = _hf("real_free_usdt") if HOST.get("is_real_mode") and HOST["is_real_mode"]() \
+        else _hf("get_paper_balance")
+    if not base or base <= 0:
+        return False
+    return _daily_pnl(strategy) < -base * cap_pct / 100.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# بناء السياق — مرة واحدة لكل رمز/دورة وتشترك فيه الاستراتيجيتان
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_ctx(symbol: str) -> Optional[ScalpContext]:
+    cfg = SCALP_CONFIG
+    now = time.time()
+    rows: List[Dict[str, float]] = []
+    src = "proxy"
+    full = _hf("binance_full_klines", symbol, cfg.exec_tf, 160)
+    if full:
+        rows = ind.rows_from_full(full)
+        src = "taker"
+    if not rows:
+        raw, _source = _hf("fetch_ohlcv_raw", symbol, cfg.exec_tf, 160) or (None, None)
+        rows = ind.rows_from_basic(raw or [])
+        src = "proxy"
+    rows = ind.closed_rows(rows, cfg.tf_sec, now)
+    if len(rows) < 60:
+        return None
+    _state["cvd_source_last"] = src
+
+    k15: List[Dict[str, float]] = []
+    raw15, _s15 = _hf("fetch_ohlcv_raw", symbol, "15m", 60) or (None, None)
+    if raw15:
+        k15 = ind.closed_rows(ind.rows_from_basic(raw15), 900, now)
+
+    live = _hf("get_live_price", symbol)
+    depth = _hf("binance_depth", symbol, 100) if HOST.get("binance_depth") else None
+
+    highs = [float(r["high"]) for r in rows]
+    lows = [float(r["low"]) for r in rows]
+    closes = [float(r["close"]) for r in rows]
+    a5 = ind.atr(highs, lows, closes, 14)
+    a15 = ind.atr([float(r["high"]) for r in k15], [float(r["low"]) for r in k15],
+                  [float(r["close"]) for r in k15], 14) if len(k15) >= 20 else None
+
+    # تقارب فيبو المحرك — زيجزاج المحرك نفسه على إغلاقات 5m (اتساق مع استراتيجية الموجات)
+    fib = None
+    dev = HOST.get("deviation_threshold")
+    zz = _hf("zigzag_pivots", closes, dev) if dev else None
+    if zz and len(zz) >= 2:
+        (i1, p1), (i2, p2) = zz[-2], zz[-1]
+        if p2 > p1 and (i2 - i1) >= 3:
+            fib = ind.fib_retrace_levels(p1, p2)   # ساق صاعد — تصحيحات 0.618/0.786
+
+    return ScalpContext(symbol=symbol, now_ts=now, k5=rows, k15=k15, live_price=live,
+                        depth=depth, cvd_source=src, atr5=a5, atr15=a15,
+                        fib_confluence=fib,
+                        extra={"fee_rate": float(HOST.get("fee_rate") or 0.001)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# بوابات الدخول المشتركة — قبل evaluate وبعده
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _entry_gates(strategy: str, symbol: str) -> Tuple[bool, str]:
+    if not SCALP_ENABLED:
+        return False, "معطل"
+    if strategy not in _instances:
+        return False, "استراتيجية معطلة"
+    if not (_hf("is_trading_enabled") or False):
+        return False, "زر التداول معطل"
+    blk = _hf("risk_entry_block_reason")
+    if blk:
+        return False, f"قاطع مخاطر المحرك: {blk}"
+    if _scalp_open_count() >= SCALP_CONFIG.max_total_open:
+        return False, "سقف صفقات السكالب المفتوحة"
+    if _scalp_open_count(strategy) >= SCALP_CONFIG.max_open_per_strategy:
+        return False, "سقف صفقات الاستراتيجية"
+    if _hf("symbol_has_active", symbol):
+        return False, "صفقة نشطة على الرمز (محرك أو سكالب)"
+    if _cooldown_left(strategy, symbol) > 0:
+        return False, "تبريد الرمز بعد صفقة سابقة"
+    if _daily_loss_block(strategy):
+        return False, "قاطع خسارة اليوم لهذه الاستراتيجية"
+    return True, ""
+
+
+def _size_position(entry: float, sl: float) -> Tuple[Optional[float], Optional[float], str]:
+    """الحجم: مخاطرة SCALP_RISK_PCT من الرصيد بوقف ATR — مقيدة بسقف قيمة صارم
+    (درس FE1.7.0: الوقف الضيق × المخاطرة = رافعة ضمنية ممنوعة)."""
+    cfg = SCALP_CONFIG
+    risk_per_unit = entry - sl
+    if risk_per_unit <= 0 or entry <= 0:
+        return None, None, "هندسة وقف غير منطقية"
+    if HOST.get("is_real_mode") and HOST["is_real_mode"]():
+        base = float(_hf("real_free_usdt") or 0)
+        if base <= 0:
+            return None, None, "رصيد حقيقي غير مقروء"
+        cap = min(cfg.max_notional_usdt, base * cfg.max_notional_pct / 100.0,
+                  float(_hf("real_max_notional") or cfg.max_notional_usdt))
+        quote = min(cap, base * cfg.risk_pct / 100.0 / risk_per_unit * entry)
+        quote = min(quote, cap)
+        if quote < max(cfg.min_notional, 5.0):
+            return None, None, "قيمة حقيقية دون حدود باينانس"
+        return quote, quote, ""          # في الحقيقي نمرر quoteOrderQty لا كمية
+    base = float(_hf("get_paper_balance") or 0)
+    if base <= 0:
+        return None, None, "رصيد ورقي غير متاح"
+    risk_usdt = base * cfg.risk_pct / 100.0
+    qty = risk_usdt / risk_per_unit
+    notional = qty * entry
+    cap = min(base * cfg.max_notional_pct / 100.0, cfg.max_notional_usdt)
+    if notional > cap:
+        qty = cap / entry
+        notional = qty * entry
+    if notional < cfg.min_notional:
+        return None, None, "قيمة صفقة أقل من الحد الأدنى"
+    return qty, notional, ""
+
+
+def _open_position(sig: ScalpSignal) -> bool:
+    """فتح صفقة سكالب — ورقي: ملء فوري بسعر حي. حقيقي: شراء سوق quoteOrderQty
+    + وقف راكن على المنصة (الحماية تعيش على باينانس لا في الذاكرة)."""
+    cfg = SCALP_CONFIG
+    live = _hf("get_live_price", sig.symbol) or sig.entry_ref
+    fill = live
+    # حارس الملاحقة: الابتعاد عن إغلاق القرار بحدّ ATR يعني أن الفرصة راحت — لا دخول
+    atr_ref = float(sig.meta.get("atr5") or 0)
+    chase_tol = cfg.entry_chase_atr * (atr_ref if atr_ref > 0 else sig.entry_ref)
+    if abs(fill - sig.entry_ref) > chase_tol:
+        _reject(sig.strategy, "السعر ابتعد عن إغلاق القرار")
+        return False
+    real = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
+    order_id = None
+    if real:
+        ex = _hf("binance_trade_exchange")
+        if ex is None:
+            _reject(sig.strategy, "مفاتيح باينانس غائبة")
+            return False
+        quote, _n, why = _size_position(fill, sig.sl)
+        if not quote:
+            _reject(sig.strategy, why)
+            return False
+        mkt = _hf("real_market_rules", sig.symbol, ex)
+        if _hf("real_min_cost", mkt) and quote < _hf("real_min_cost", mkt):
+            _reject(sig.strategy, "دون أدنى قيمة باينانس")
+            return False
+        order = _hf("real_market_buy", sig.symbol, quote)
+        if not order:
+            _reject(sig.strategy, "فشل أمر الشراء الحقيقي")
+            return False
+        order_id = str(order.get("id") or "") or None
+        fill = float(order.get("average") or order.get("price") or fill)
+        notional = quote
+        qty = float(order.get("amount") or (notional / fill))
+        qty = _hf("real_adjust_amount", ex, sig.symbol, qty) or qty
+        stop = _hf("place_real_stop_loss", sig.symbol, qty, sig.sl)
+        sig.meta["stop_order_id"] = str((stop or {}).get("id") or "") or None
+    else:
+        qty, notional, why = _size_position(fill, sig.sl)
+        if not qty:
+            _reject(sig.strategy, why)
+            return False
+
+    meta = dict(sig.meta)
+    meta.update({"fill": fill, "partial_done": False, "be_done": False,
+                 "opened_by": "scalp_manager", "max_hold_min": cfg.max_hold_min})
+    now_iso = _hf("utc_now_iso") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    _hf("db_execute",
+        "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, fill_price,"
+        " stop_loss, take_profit, tp1, tp2, quantity, notional_usdt, rr_ratio, meta_json,"
+        " created_at, filled_at, initial_quantity, is_real, peak_price)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (sig.symbol, "BULLISH", sig.strategy, "open", sig.entry_ref, fill, sig.sl, sig.tp2,
+         sig.tp1, sig.tp2, qty, notional, sig.rr1, json.dumps(meta, ensure_ascii=False),
+         now_iso, now_iso, qty, 1 if real else 0, fill))
+    _bump(sig.strategy, "signals")
+    with _lock:
+        _counters[sig.strategy]["last_signal_at"] = now_iso
+        _counters[sig.strategy]["last_signal_symbol"] = sig.symbol
+    mode = "حقيقية 🔴" if real else "ورقية"
+    fp = HOST.get("fmt_price") or (lambda p: f"{p:.6g}")
+    _log("info",
+         f"⚡ سكالب مفتوح ({sig.label}) {mode}: {sig.symbol} عند {fp(fill)}\n"
+         f"وقف: {fp(sig.sl)} | هدف 1: {fp(sig.tp1)} (جزئي {cfg.partial_pct:.0f}% + BE) | هدف 2: {fp(sig.tp2)}\n"
+         f"R:R صافي حتى الهدف 1: {sig.rr1:.2f} — {sig.reason}",
+         "SCALP_OPEN")
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# دورة المسح — بعد إغلاق كل شمعة 5m
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scan_cycle() -> Dict[str, int]:
+    cfg = SCALP_CONFIG
+    stats = {"symbols": 0, "ctx_fail": 0, "signals": 0}
+    if not SCALP_ENABLED or not _instances:
+        return stats
+    _early_exits_all()
+    for sym in resolve_symbols():
+        stats["symbols"] += 1
+        try:
+            ctx = _build_ctx(sym)
+        except Exception:
+            stats["ctx_fail"] += 1
+            continue
+        if ctx is None:
+            stats["ctx_fail"] += 1
+            continue
+        for name, strat in list(_instances.items()):
+            ok, why = _entry_gates(name, sym)
+            if not ok:
+                _reject(name, why)
+                continue
+            try:
+                sig = strat.evaluate(ctx)
+            except Exception:
+                lg = HOST.get("logger")
+                if lg:
+                    lg.exception("[سكالب] تقييم %s على %s فشل", name, sym)
+                continue
+            if not sig:
+                continue
+            if not sig.side == "LONG":            # حارس سبوت صريح
+                _reject(name, "سبوت: لا بيع مكشوف")
+                continue
+            if _open_position(sig):
+                stats["signals"] += 1
+                break                             # رمز واحد = صفقة سكالب واحدة بالدورة
+    with _lock:
+        _state["last_scan_at"] = _hf("utc_now_iso")
+        _state["last_scan_ts"] = time.time()
+        _state["cycles"] += 1
+    return stats
+
+
+def _early_exits_all() -> None:
+    """خروج مبكر على شموع مغلقة (تفشل البنية/الدلتا) — بيانات الدورة نفسها."""
+    rows = _hf("db_query", "SELECT * FROM signals WHERE status='open'"
+                            " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE') ORDER BY id ASC") or []
+    if not rows:
+        return
+    by_sym: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_sym.setdefault(r["symbol"], []).append(r)
+    for sym, srows in by_sym.items():
+        ctx = None
+        try:
+            ctx = _build_ctx(sym)
+        except Exception:
+            ctx = None
+        if ctx is None or not ctx.k5:
+            continue
+        closes = [float(r["close"]) for r in ctx.k5]
+        for sig in srows:
+            try:
+                name = sig["strategy_name"]
+                meta = _sig_meta(sig)
+                if name == "SCALP_FLOW":
+                    cv = ind.cvd_series(ctx.k5)
+                    st = ind.supertrend([float(r["high"]) for r in ctx.k5],
+                                        [float(r["low"]) for r in ctx.k5], closes, 10, 2.5)
+                    if cv and st and cv["cvd"][-1] < cv["ema"][-1] and closes[-1] < st["line"]:
+                        _close_position(sig, closes[-1], "انقلاب الدلتا (CVD) ضد الاتجاه مع كسر SuperTrend", "early")
+                        _bump(name, "early_exits")
+                        continue
+                if name == "SCALP_PROFILE":
+                    fail_lv = float(meta.get("fail_level") or 0)
+                    if fail_lv > 0 and closes[-1] < fail_lv:
+                        _close_position(sig, closes[-1], "انهيار بنية القيمة (إغلاق تحت VAL بهامش واسع)", "early")
+                        _bump(name, "early_exits")
+                        continue
+                # مهلة الصفقة — شبكة أمان مزدوجة مع المراقبة
+                created = str(sig.get("created_at") or "")
+                if created:
+                    try:
+                        t0 = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
+                        age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - t0).total_seconds() / 60.0
+                        if age_min > SCALP_CONFIG.max_hold_min:
+                            _close_position(sig, closes[-1], f"مهلة السكالب انتهت ({SCALP_CONFIG.max_hold_min} دقيقة)", "time")
+                    except ValueError:
+                        pass
+            except Exception:
+                lg = HOST.get("logger")
+                if lg:
+                    lg.exception("[سكالب] خروج مبكر %s فشل", sig.get("symbol"))
+
+
+def _sig_meta(sig: Dict[str, Any]) -> Dict[str, Any]:
+    raw = sig.get("meta_json")
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# دورة المراقبة — كل 20 ثانية: وقف-أولًا + جزئي + BE + الهدف الثاني
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _close_position(sig: Dict[str, Any], price: float, reason: str, klass: str = "other") -> None:
+    real = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]() and sig.get("is_real"))
+    if real:
+        _hf("close_real_trade", sig, price, reason)
+    else:
+        _hf("close_signal_row", sig, price, reason)
+    _cooldown_set(sig["strategy_name"], sig["symbol"])
+    _bump(sig["strategy_name"], "closes", klass)
+
+
+def _partial_close(sig: Dict[str, Any], price: float) -> bool:
+    """جني جزئي SCALP_PARTIAL_PCT من المتبقي عند TP1 — ورقي: محاسبة مباشرة،
+    حقيقي: بيع سوق فعلًا ثم المحاسبة، والغبار يُعتبر منجزًا (عقيدة المحرك)."""
+    cfg = SCALP_CONFIG
+    qty_now = float(sig.get("quantity") or 0)
+    leg = qty_now * cfg.partial_pct / 100.0
+    real = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]() and sig.get("is_real"))
+    if real:
+        ex = _hf("binance_trade_exchange")
+        leg = _hf("real_adjust_amount", ex, sig["symbol"], leg) or 0.0
+        if leg <= 0:
+            return False
+        order = _hf("place_real_market_sell", sig["symbol"], leg)
+        if not order:
+            return False
+        fill_leg = float(order.get("average") or price)
+        _hf("account_partial_close", sig, leg, fill_leg, "هدف سكالب الأول (جزئي حقيقي)")
+    else:
+        if leg <= 0:
+            return False
+        _hf("account_partial_close", sig, leg, price, "هدف سكالب الأول (جزئي ورقي)")
+    _bump(sig["strategy_name"], "partials")
+    return True
+
+
+def _monitor_cycle() -> Dict[str, int]:
+    cfg = SCALP_CONFIG
+    stats = {"open": 0, "sl": 0, "partial": 0, "tp2": 0}
+    rows = _hf("db_query", "SELECT * FROM signals WHERE status='open'"
+                            " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE') ORDER BY id ASC") or []
+    for sig in rows:
+        sym = sig["symbol"]
+        try:
+            live = _hf("get_live_price", sym)
+            if live is None:
+                live = float(sig.get("fill_price") or 0)
+            if live <= 0:
+                continue
+            df = _hf("get_recent_candles", sym, SCALP_CONFIG.exec_tf, 2, 1)
+            high_now, low_now = live, live
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                high_now = max(high_now, float(last["high"]))
+                low_now = min(low_now, float(last["low"]))
+            stats["open"] += 1
+            # تتبع القمة (يُعرض في اللوحة)
+            peak = max(float(sig.get("peak_price") or live), high_now)
+            if abs(peak - float(sig.get("peak_price") or 0)) > 1e-12:
+                _hf("db_execute", "UPDATE signals SET peak_price=%s WHERE id=%s", (peak, sig["id"]))
+            # 1) الوقف أولًا — دائمًا قبل أي ربح (عقيدة محمية لا تكسر)
+            sl_now = float(sig.get("stop_loss") or 0)
+            if sl_now > 0 and low_now <= sl_now:
+                _close_position(sig, sl_now, "وقف سكالب (دلتا/بنية)", "sl")
+                stats["sl"] += 1
+                continue
+            meta = _sig_meta(sig)
+            # 2) الجزئي عند TP1 + نقل الوقف لنقطة الدخول (BE) — مرة واحدة
+            tp1 = float(sig.get("tp1") or 0)
+            fill = float(sig.get("fill_price") or 0)
+            if tp1 > 0 and not meta.get("partial_done") and high_now >= tp1:
+                if _partial_close(sig, tp1):
+                    meta["partial_done"] = True
+                    meta["be_done"] = True
+                    _hf("db_execute", "UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
+                        (fill, json.dumps(meta, ensure_ascii=False), sig["id"]))
+                    sig["stop_loss"] = fill
+                    if sig.get("is_real"):
+                        _hf("replace_real_stop", sig, fill)
+                    stats["partial"] += 1
+                else:
+                    meta["partial_done"] = True   # غبار/فشل بيع — لا نعيد المحاولة للأبد
+                    _hf("db_execute", "UPDATE signals SET meta_json=%s WHERE id=%s",
+                        (json.dumps(meta, ensure_ascii=False), sig["id"]))
+            # 3) الهدف الثاني — إغلاق المتبقي
+            tp2 = float(sig.get("take_profit") or 0)
+            if tp2 > 0 and high_now >= tp2:
+                _close_position(sig, tp2, "هدف سكالب الثاني (نهاية الموجة القصيرة)", "tp")
+                stats["tp2"] += 1
+                continue
+            # 4) مهلة الصفقة
+            created = str(sig.get("created_at") or "")
+            if created:
+                try:
+                    t0 = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
+                    age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - t0).total_seconds() / 60.0
+                    if age_min > SCALP_CONFIG.max_hold_min:
+                        _close_position(sig, live, f"مهلة السكالب انتهت ({SCALP_CONFIG.max_hold_min} دقيقة)", "time")
+                except ValueError:
+                    pass
+        except Exception:
+            lg = HOST.get("logger")
+            if lg:
+                lg.exception("[سكالب] مراقبة %s فشلت", sym)
+    return stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# الحلقات والانطلاق
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scan_loop() -> None:
+    lg = HOST.get("logger")
+    time.sleep(30)   # إحماء — لا مسح قبل اكتمال إقلاع المضيف
+    while True:
+        try:
+            s = _scan_cycle()
+            if lg and s.get("signals"):
+                lg.info("[سكالب] دورة مسح: %s", s)
+        except Exception as exc:
+            with _lock:
+                _state["last_error"] = str(exc)[:200]
+            if lg:
+                lg.exception("استثناء في حلقة مسح السكالب: %s", exc)
+        nap = 300.0
+        try:
+            nap = float(_hf("seconds_until_next_candle", SCALP_CONFIG.exec_tf) or 300.0) + 4.0
+        except Exception:
+            pass
+        time.sleep(max(20.0, min(nap, 3700.0)))
+
+
+def _monitor_loop() -> None:
+    lg = HOST.get("logger")
+    time.sleep(25)
+    while True:
+        try:
+            _monitor_cycle()
+        except Exception as exc:
+            if lg:
+                lg.exception("استثناء في حلقة مراقبة السكالب: %s", exc)
+        time.sleep(20)
+
+
+def start() -> None:
+    """إقلاع خيوط السكالب — يُستدعى من initialize_bot_services بعد إقلاع بقية الخدمات."""
+    global _started
+    with _lock:
+        if _started:
+            return
+        if not SCALP_ENABLED:
+            HOST.get("logger") and HOST["logger"].info("[سكالب] معطل (SCALP_ENABLED=0)")
+            return
+        if not _instances:
+            HOST.get("logger") and HOST["logger"].info("[سكالب] لا استراتيجية مفعلة — لا إقلاع")
+            return
+        _started = True
+        _state["boot_at"] = time.time()
+    threading.Thread(target=_scan_loop, daemon=True, name="scalp-scan").start()
+    threading.Thread(target=_monitor_loop, daemon=True, name="scalp-monitor").start()
+    lg = HOST.get("logger")
+    if lg:
+        lg.info("[سكالب] مدير الاستراتيجيات المتوازية انطلق — %s",
+                " + ".join(_instances.keys()))
+
+
+def running() -> bool:
+    return _started
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# لقطة الحالة — /api/scalp و/health
+# ─────────────────────────────────────────────────────────────────────────────
+
+def snapshot() -> Dict[str, Any]:
+    with _lock:
+        st = dict(_state)
+        counters = {n: dict(c) for n, c in _counters.items()}
+    st["last_scan_age"] = (round(time.time() - st.get("last_scan_ts", 0.0), 1)
+                            if st.get("last_scan_ts") else None)
+    cfg = SCALP_CONFIG
+    strategies = {}
+    for name, inst in _instances.items():
+        strategies[name] = {
+            "label": getattr(inst, "label", name),
+            "enabled": True,
+            "open_n": _scalp_open_count(name),
+            "signals": counters.get(name, {}).get("signals", 0),
+            "partials": counters.get(name, {}).get("partials", 0),
+            "early_exits": counters.get(name, {}).get("early_exits", 0),
+            "closes": counters.get(name, {}).get("closes", {}),
+            "rejects": counters.get(name, {}).get("rejects", {}),
+            "daily_pnl": round(_daily_pnl(name), 4),
+            "daily_loss_block": _daily_loss_block(name),
+            "cooldowns": {s: round(_cooldown_left(name, s), 1)
+                          for s, ts in _cooldowns.get(name, {}).items()
+                          if _cooldown_left(name, s) > 0},
+            "last_signal_at": counters.get(name, {}).get("last_signal_at"),
+            "last_signal_symbol": counters.get(name, {}).get("last_signal_symbol"),
+        }
+    return {
+        "enabled": SCALP_ENABLED and bool(_instances),
+        "running": _started,
+        "exec_tf": cfg.exec_tf,
+        "symbols": resolve_symbols(),
+        "config": {
+            "risk_pct": cfg.risk_pct, "max_total_open": cfg.max_total_open,
+            "max_notional_usdt": cfg.max_notional_usdt,
+            "max_notional_pct": cfg.max_notional_pct,
+            "cooldown_sec": cfg.cooldown_sec, "daily_loss_pct": cfg.daily_loss_pct,
+            "max_hold_min": cfg.max_hold_min, "partial_pct": cfg.partial_pct,
+            "rr_net_min": cfg.rr_net_min,
+        },
+        "state": {"cycles": st.get("cycles", 0), "last_scan_at": st.get("last_scan_at"),
+                  "last_scan_age": st.get("last_scan_age"),
+                  "last_error": st.get("last_error", ""), "cvd_source_last": st.get("cvd_source_last", "")},
+        "strategies": strategies,
+    }
+
+
+scalp_manager = {
+    "attach_host": attach_host,
+    "start": start,
+    "snapshot": snapshot,
+    "running": running,
+    "scan_cycle": _scan_cycle,
+    "monitor_cycle": _monitor_cycle,
+    "build_ctx": _build_ctx,
+    "entry_gates": _entry_gates,
+    "size_position": _size_position,
+    "open_position": _open_position,
+    "close_position": _close_position,
+    "partial_close": _partial_close,
+    "cooldown_set": _cooldown_set,
+    "cooldown_left": _cooldown_left,
+    "daily_pnl": _daily_pnl,
+    "daily_loss_block": _daily_loss_block,
+    "resolve_symbols": resolve_symbols,
+    "sig_meta": _sig_meta,
+    "config": SCALP_CONFIG,
+    "instances": _instances,
+    "counters": _counters,
+    "state": _state,
+}
