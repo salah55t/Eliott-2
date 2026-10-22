@@ -170,7 +170,7 @@ class TestHealthPublicForCron:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "EL2.0.0"
+        assert body["version"] == "EL2.1.0"
         assert isinstance(body["keep_alive"], dict)
 
     def test_health_stays_open_while_dashboard_protected(self, client, monkeypatch):

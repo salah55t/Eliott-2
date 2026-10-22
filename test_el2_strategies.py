@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات EL2.0.0 — منطق استراتيجيتي السكالب على بيانات صناعية
+"""اختبارات EL2.1.0 — منطق استراتيجيتي السكالب على بيانات صناعية
 ================================================================
   1) S1 Flow-Ignition: دخول زخم صحيح + أهداف مركبة على جدار + رفض الترند الهابط
      + رفض الحجم الضعيف + رفض الامتداد الزائد + هندسة وقف مثبتة داخل الحدود
-  2) S2 Profile-Reversion: رمشة VAL + امتصاص CVD → دخول نحو POC + رفض الترند
-     القوي + رفض الإغلاق فوق POC + رفض المنطقة الضيقة
+  2) S2 Profile-Reversion v2 «Sweep & Reclaim»: مسح سيولة + استعادة + استسلام
+     + امتصاص CVD → دخول نحو أقرب مغناطيس (POC/VWAP) + رفض بلا استسلام
+     + رفض بلا مسح + رفض الترند القوي + تثبيت الوقف الأدنى 0.9×ATR
   3) الواجهة المشتركة: حارس سبوت (لا بيع مكشوف) + R:R صافي بنفس صيغة المحرك
 """
 
@@ -141,66 +142,110 @@ def test_s1_short_side_blocked_by_spot_guard():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2) S2 — Profile Reversion
+# 2) S2 — Profile Reversion v2 «Sweep & Reclaim»
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_s2_setup():
-    """سوق عرضي يبني منطقة قيمة ثم رمشة تحت VAL أدنى من قاع النافذة السابق
-    بإغلاق داخلي + امتصاص CVD. البروفايل يُحسب على الصفوف النهائية (بعد الرمشة)
-    بحجم الرمشة عاديًا كي لا يشوّه منطقة القيمة."""
+    """سوق عرضي يبني منطقة قيمة ثم شمعة أخيرة تمسح قاع السيولة (أدنى قاع 24 شمعة
+    قبل نافذة المسح) بعمق حقيقي وحجم استسلام 1.6× المتوسط، وتُغلق فوق المستوى
+    المسحوب بامتصاص CVD (دلتا موجبة قوية). البروفايل يُحسب على الصفوف النهائية."""
     rows = sine_rows(80, base=100.0, amp=2.5, period=14.0)
     a = ind.atr([r["high"] for r in rows], [r["low"] for r in rows],
                 [r["close"] for r in rows], 14)
     val0 = ind.volume_profile(rows)["val"]
-    # الرمشة يجب أن تكون قاعًا جديدًا فعليًا على آخر 12 شمعة (شرط الامتصاص)
-    prev_min = min(r["low"] for r in rows[-13:-1])
+    # القاع المرجعي: أدنى قاع في 24 شمعة قبل نافذة المسح (آخر 3 شموع)
+    prev_min = min(r["low"] for r in rows[-27:-3])
     sweep_low = prev_min - 0.35 * a
     sweep_close = val0 + 0.15 * a
     last = dict(rows[-1])
     last.update({"open": sweep_close + 0.2 * a, "high": sweep_close + 0.4 * a,
                  "low": sweep_low, "close": sweep_close,
-                 "volume": 100.0, "taker_base": 92.0})   # دلتا موجبة = امتصاص
+                 "volume": 160.0, "taker_base": 147.2})   # استسلام 1.6× + دلتا موجبة
     rows = rows[:-1] + [last]
     vp = ind.volume_profile(rows)                        # البروفايل كما يراه evaluate
     return rows, a, vp
 
 
-def test_s2_enters_val_sweep_with_absorption():
+def expected_tp1(rows, a, vp):
+    """المغناطيس الأقرب المؤهل — نفس منطق v2 (POC أو VWAP أيهما أقرب)."""
+    close = rows[-1]["close"]
+    vwap = ind.vwap_rolling(rows[-72:])
+    mags = []
+    if close < vp["poc"] and (vp["poc"] - close) >= 0.45 * a:
+        mags.append(vp["poc"])
+    if vwap and close < vwap and (vwap - close) >= 0.45 * a:
+        mags.append(vwap)
+    return min(mags) if mags else None
+
+
+def test_s2_enters_sweep_reclaim_with_absorption():
     rows, a, vp = build_s2_setup()
     sig = ProfileReversion().evaluate(make_ctx(rows))
     assert sig is not None
     assert sig.strategy == "SCALP_PROFILE" and sig.side == "LONG"
     close = rows[-1]["close"]
     assert sig.sl < close < sig.tp1 < sig.tp2
-    assert sig.tp1 == pytest.approx(vp["poc"])     # الهدف الأول = POC
-    assert sig.tp2 == pytest.approx(vp["vah"])     # الثاني = VAH
+    exp = expected_tp1(rows, a, vp)
+    assert exp is not None and sig.tp1 == pytest.approx(exp)   # أقرب مغناطيس (POC/VWAP)
     assert sig.rr1 >= 0.3
-    assert sig.meta["fail_level"] < vp["val"]      # مستوى انهيار البنية تحت VAL
-    assert close < vp["poc"]
+    assert sig.meta["tp1_basis"] in ("poc", "vwap")
+    assert sig.meta["fail_level"] == pytest.approx(rows[-1]["low"])  # فشل الاستعادة = إغلاق تحت القاع المسحوب
+    assert sig.meta["sweep_vol_ratio"] >= 1.25
+    assert sig.meta["reversion"] == 1
+    assert sig.meta["max_hold_override"] == 45
+    # مسافة الوقف داخل القيد الهيكلي [0.9, 2.6]×ATR
+    assert 0.9 * a <= (close - sig.sl) <= 2.6 * a + 1e-9
 
 
 def test_s2_rejects_close_above_poc():
     rows, a, vp = build_s2_setup()
-    # أغلق الرمشة فوق POC — المهمة انتهت أصلًا
-    rows[-1]["close"] = vp["poc"] + 0.5 * a
+    # أغلق الاستعادة فوق كل المغانط (POC وVWAP) — لا هدف قابل للبلوغ (المهمة انتهت أصلًا)
+    vwap = ind.vwap_rolling(rows[-72:])
+    rows[-1]["close"] = max(vp["poc"], vwap) + 0.6 * a
     rows[-1]["high"] = max(rows[-1]["high"], rows[-1]["close"])
     assert ProfileReversion().evaluate(make_ctx(rows)) is None
 
 
 def test_s2_rejects_no_absorption_delta_selling():
     rows, a, vp = build_s2_setup()
-    # تدفق محايد في نافذة الامتصاص (دلتا صفر) ثم بيع عنيف في شمعة الرمشة —
-    # CVD ينخفض تحت مستوى قاع النافذة → لا امتصاص → رفض
+    # تدفق محايد في نافذة الامتصاص (دلتا صفر) ثم بيع عنيف في شمعة المسح —
+    # CVD ينخفض تحت مستوى القاع المرجعي → لا امتصاص → رفض
     for r in rows[-14:-1]:
         r["taker_base"] = r["volume"] * 0.5
     rows[-1]["taker_base"] = 0.0
     assert ProfileReversion().evaluate(make_ctx(rows)) is None
 
 
-def test_s2_rejects_shallow_wick():
+def test_s2_rejects_no_capitulation():
     rows, a, vp = build_s2_setup()
-    val = vp["val"]
-    rows[-1]["low"] = val - 0.05 * a               # رمشة أقل من 0.30×ATR
+    rows[-1]["volume"] = 100.0              # حجم عادي — رمشة بلا ذبح سيولة
+    rows[-1]["taker_base"] = 92.0
+    assert ProfileReversion().evaluate(make_ctx(rows)) is None
+
+
+def test_s2_rejects_shallow_sweep():
+    """ممسح ضحل تحت قاع سوق مرتفع عن القيمة (SWING فوق VAL) بعمق أقل من
+    0.15×ATR — ليس ذبح سيولة حقيقيًا → رفض."""
+    rows = []
+    for i in range(12):   # ذيل قديم منخفض يوسع البروفايل نزولًا
+        rows.append({"ts": i * 300000.0, "open": 98.5, "high": 98.7, "low": 97.5,
+                     "close": 98.0, "volume": 100.0, "taker_base": 55.0})
+    for i in range(48):   # جسم متوسط واسع
+        rows.append({"ts": (12 + i) * 300000.0, "open": 100.2, "high": 101.5, "low": 99.5,
+                     "close": 100.8, "volume": 100.0, "taker_base": 55.0})
+    for i in range(18):   # هضبة حديثة مرتفعة — قيعان الـ24 الأخيرة أعلى من VAL
+        rows.append({"ts": (60 + i) * 300000.0, "open": 101.9, "high": 102.1, "low": 101.8,
+                     "close": 102.0, "volume": 100.0, "taker_base": 55.0})
+    a = ind.atr([r["high"] for r in rows], [r["low"] for r in rows],
+                [r["close"] for r in rows], 14)
+    vp0 = ind.volume_profile(rows)
+    prior_low = min(float(r["low"]) for r in rows[-27:-3])   # قاع الهضبة
+    liq0 = max(prior_low, vp0["val"])
+    # شمعة مسح ضحلة: تخترق القاع المرجعي بـ 0.08×ATR فقط وتغلق فوقه
+    last = {"ts": 78 * 300000.0, "open": liq0 + 0.02 * a, "high": liq0 + 0.12 * a,
+            "low": liq0 - 0.08 * a, "close": liq0 + 0.06 * a,
+            "volume": 160.0, "taker_base": 147.2}
+    rows.append(last)
     assert ProfileReversion().evaluate(make_ctx(rows)) is None
 
 
@@ -208,6 +253,27 @@ def test_s2_rejects_strong_downtrend():
     # ترند هابط قوي على 5m — درع الاتجاه يمنع صيد السكاكين
     rows = list(reversed(trend_rows(90, drift=0.06, taker_ratio=0.35)))
     assert ProfileReversion().evaluate(make_ctx(rows)) is None
+
+
+def test_s2_stop_clamped_to_min_atr(monkeypatch):
+    """تثبيت الوقف الأدنى: وقف خام أضيق من الحد يُرفع إلى الحد لا يُرفض —
+    نعزل الهندسة برقعة SL_MIN_ATR أعلى من الخام (2.5×ATR) على الإعداد السليم
+    مع تعطيل أرضية R:R مؤقتًا (الاختبار للهندسة لا للبوابات الأخرى)."""
+    from strategies import profile_reversion as prmod
+    from strategies.base import ScalpConfig
+    monkeypatch.setattr(prmod, "SL_MIN_ATR", 2.5)
+    rows, _a, vp = build_s2_setup()
+    a = ind.atr([r["high"] for r in rows], [r["low"] for r in rows],
+                [r["close"] for r in rows], 14)   # نفس ATR الذي تراه الاستراتيجية
+    cfg = ScalpConfig()
+    cfg.rr_net_min = 0.0                     # عزل: هذا اختبار هندسة الوقف فقط
+    sig = ProfileReversion(cfg).evaluate(make_ctx(rows))
+    assert sig is not None
+    close = rows[-1]["close"]
+    raw_dist = close - (rows[-1]["low"] - 0.55 * a)
+    assert raw_dist < 2.5 * a                # الوقف الخام أضيق من الحد — لولا التثبيت
+    assert sig.sl == pytest.approx(close - 2.5 * a)   # ثبت عند الحد الأدنى
+    assert sig.sl < close < sig.tp1          # البنية ما زالت سليمة
 
 
 def test_s2_fib_confluence_raises_score():
@@ -221,7 +287,6 @@ def test_s2_fib_confluence_raises_score():
     assert scored.meta["score"] > base.meta["score"]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 3) الواجهة المشتركة
 # ─────────────────────────────────────────────────────────────────────────────
 

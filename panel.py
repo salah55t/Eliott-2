@@ -35,7 +35,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "EL2.0.0"
+BOT_VERSION = "EL2.1.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -353,6 +353,31 @@ PANEL_HTML = r"""<!DOCTYPE html>
   @media (max-width:640px){ body{padding:10px} .grid{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
     h1{font-size:1.15rem} button.act{padding:7px 10px; font-size:.74rem}
     .aurora,.stars{display:none} .orb{filter:blur(65px)} }
+  /* [EL2.1.0] نافذة الإعدادات + دونات الأداء + أشرطة الإغلاقات المكدسة */
+  #settings-modal { display:none; position:fixed; inset:0; z-index:999; background:rgba(0,0,0,.62);
+    backdrop-filter:blur(3px); align-items:center; justify-content:center; }
+  #settings-modal .modal-box { width:min(560px,92vw); max-height:86vh; overflow:auto;
+    background:linear-gradient(160deg,rgba(2,20,16,.97),rgba(0,9,14,.97));
+    border:1px solid var(--line); border-radius:16px; padding:18px 20px;
+    box-shadow:0 0 40px rgba(0,255,156,.12); animation:modalIn .25s ease; }
+  @keyframes modalIn { from{opacity:0; transform:translateY(14px) scale(.98)} to{opacity:1; transform:none} }
+  #settings-modal h3 { color:var(--neon); font-family:var(--kufi); margin-bottom:12px; text-shadow:0 0 14px rgba(0,255,156,.4); }
+  .set-row { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:11px 12px; margin-bottom:8px; border:1px solid var(--line2); border-radius:12px;
+    background:rgba(0,229,255,.03); transition:border-color .2s, background .2s, opacity .2s; }
+  .set-row:hover { border-color:var(--neon); background:rgba(0,255,156,.05); }
+  .set-row .set-name { font-weight:700; color:var(--txt); margin-bottom:2px; }
+  .set-row.off { opacity:.62; }
+  .cls-bars { display:flex; height:10px; border-radius:6px; overflow:hidden; margin:4px 0 2px; background:rgba(255,255,255,.06); }
+  .cls-bars > i { display:block; height:100%; transition:width .5s ease; }
+  .cls-lg { display:flex; flex-wrap:wrap; gap:8px; font-size:11px; color:var(--mut); margin-top:2px; }
+  .donut-wrap { display:flex; align-items:center; gap:14px; margin:10px 0 4px; flex-wrap:wrap; }
+  .donut { position:relative; width:110px; height:110px; flex:0 0 auto; }
+  .donut svg { transform:rotate(-90deg); }
+  .donut .donut-c { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  .donut .donut-c b { font-size:1.25rem; color:var(--neon); font-family:'Share Tech Mono',monospace; }
+  .donut .donut-c span { font-size:10px; color:var(--mut); }
+  .scalp-card.dim { opacity:.55; }
 </style>
 </head>
 <body>
@@ -375,6 +400,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <label class="switch"><input type="checkbox" id="real-toggle" onchange="toggleReal(this)"><div class="slider"></div></label>
     </div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
+    <button class="act" id="settings-btn" title="تفعيل/تعطيل الاستراتيجيات الثلاث — الحالة محفوظة وتصمد عبر إعادة النشر" onclick="openSettings()">⚙ الإعدادات</button>
     <div class="tf-ctl" title="فريم الكشف والتنفيذ — التبديل يلغي الأوامر الورقية المعلقة ويبدأ فحصًا جديدًا على الفريم المختار (الاختيار محفوظ ويصمد عبر إعادة النشر)">
       <span class="rlbl">الفريم:</span>
       <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
@@ -419,17 +445,24 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <label for="ew-toggle" title="مؤشر Elliott Wave [LuxAlgo] — ثلاثة زيجزاج (4/8/16) بمنطق Pine حرفي: دافع 12345 + تصحيح ABC + فيبو 0.5–0.854" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#e6f7ff;font-size:12px;border:1px solid rgba(0,229,255,.25);border-radius:8px;padding:5px 10px;background:rgba(0,229,255,.05)">
         <input type="checkbox" id="ew-toggle" checked onchange="ewToggle()" style="accent-color:#00e5ff;cursor:pointer"> موجات إليوت (LuxAlgo)
       </label>
+      <label for="lvl-toggle" title="مستويات القيمة الحية من محرك السكالب: POC/VAH/VAL من Volume Profile + VWAP — نفس حسابات الاستراتيجية حرفيًا عبر /api/scalp/levels (كاش 45ث)" style="display:flex;align-items:center;gap:5px;cursor:pointer;color:#c792ea;font-size:12px;border:1px solid rgba(176,38,255,.35);border-radius:8px;padding:5px 10px;background:rgba(176,38,255,.06)">
+        <input type="checkbox" id="lvl-toggle" checked onchange="lvlToggle()" style="accent-color:#b026ff;cursor:pointer"> مستويات القيمة (POC/VA)
+      </label>
       <span id="chart-legend-ewx" class="mut small">
         <span style="color:#f7c948">━ زيجزاج المحرك + 0–5</span> · <span style="color:#c792ea">┈ مفاتيح فيبو W2/W3</span> · <span style="color:#64d8cb">┈ مفاتيح W4</span>
       </span>
       <span id="chart-legend-ew" class="mut small">
         <span style="color:#ff5b6a">━ زيجزاج 4</span> · <span style="color:#4da3ff">━ زيجزاج 8</span> · <span style="color:#e6edf3">━ زيجزاج 16</span>
       </span>
+      <span id="chart-legend-lvl" class="mut small">
+        <span style="color:#ffd24a">━ POC</span> · <span style="color:#b026ff">┈ VAH/VAL</span> · <span style="color:#00e5ff">┈ VWAP</span>
+      </span>
     </div>
     <div id="lwc-chart" class="chart-frame" style="border:1px solid rgba(0,229,255,.12);border-radius:14px;background:rgba(0,229,255,.02)"></div>
     <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
     <div id="ew-note" class="mut small" style="margin-top:2px"></div>
     <div id="ewx-note" class="mut small" style="margin-top:2px;color:#f7c948"></div>
+    <div id="lvl-note" class="mut small" style="margin-top:2px;color:#c792ea"></div>
     <div class="mut small" style="margin-top:4px">الشارت: TradingView Lightweight Charts v5.2.1 (Apache-2.0) — يُقدَّم محليًا من الخادم بلا أي اعتماد خارجي · طبقة «موجات المحرك» تُحسب من محرك الاستراتيجية نفسه (زيجزاج 0.6% + قواعد P0–P5 + فيبو الاستراتيجية) · مؤشر الموجات الإضافي: منقول من Elliott Wave [LuxAlgo] © LuxAlgo (CC BY-NC-SA 4.0) — إسناد إلزامي</div>
   </section>
 
@@ -441,6 +474,8 @@ PANEL_HTML = r"""<!DOCTYPE html>
   <section>
     <h2>📊 لوحة الأداء <span class="mut small">— مقتبسة من لوحة أداء V9.34.0 (اقتباسات OctoBot): صافي الربح · معدل الربح · عامل الربح · منحنى تراكمي بأعمدة الربح/الخسارة لكل صفقة</span></h2>
     <div class="grid" id="perf-cards"></div>
+    <div class="donut-wrap" id="perf-donut"></div>
+    <div id="perf-strats" style="margin:6px 0 2px"></div>
     <div id="pnl-chart-meta" class="mut small" style="margin:8px 0 4px"></div>
     <div id="pnl-chart"></div>
   </section>
@@ -468,6 +503,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
     © LuxAlgo (<a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a>) —
     مستودع المشروع: <a href="https://github.com/salah55t/fibo-elio" target="_blank">salah55t/fibo-elio</a>
   </footer>
+</div>
+<!-- [EL2.1.0] نافذة إعدادات الاستراتيجيات — تفعيل/تعطيل حي محفوظ -->
+<div id="settings-modal">
+  <div class="modal-box">
+    <h3>⚙ إعدادات الاستراتيجيات</h3>
+    <div id="settings-list"></div>
+    <div class="mut small" style="margin-top:10px">التعطيل يوقف توليد إشارات جديدة فقط — الصفقات المفتوحة تستمر بالإدارة حتى الإغلاق. الحالة محفوظة في قاعدة البيانات وتصمد عبر إعادة النشر.</div>
+    <div style="margin-top:12px;text-align:left"><button class="act" onclick="closeSettings()">إغلاق</button></div>
+  </div>
 </div>
 <div id="toast"></div>
 
@@ -674,22 +718,52 @@ function stratChip(s){
   return '';
 }
 
-// ================= [EL2.0.0] الاستراتيجيات المتوازية — بطاقات Eliott+2 =================
-function renderScalp(scalp){
+// ================= [EL2.0.0→EL2.1.0] الاستراتيجيات المتوازية — بطاقات Eliott+2 =================
+// [EL2.1.0] كل بطاقة تعكس: حالة المفتاح (زر ⚡⚙) + أعمدة إغلاقات مكدسة + أداء حقيقي
+// محسوب من الصفقات المغلقة (آخر 25) لكل استراتيجية — صدق الأرقام لا الديكور.
+const STRAT_META = {
+  'SCALP_FLOW':   {icon:'⚡', color:'#00ff9c', env:'SCALP_S1_ENABLED'},
+  'SCALP_PROFILE':{icon:'◈', color:'#b026ff', env:'SCALP_S2_ENABLED'},
+};
+function stratClosedStats(closed, key){
+  const a = {n:0, w:0, pnl:0};
+  (closed||[]).forEach(s=>{
+    if((s.strategy_name||'Elliott_Fibonacci') !== key) return;
+    if(!['closed','expired','cancelled'].includes(s.status)) return;
+    a.n++;
+    const p = parseFloat(s.pnl_usdt||0); if(!isNaN(p)){ a.pnl += p; if(p>0) a.w++; }
+  });
+  return a;
+}
+function clsBars(closes){
+  const c = closes||{};
+  const parts = [['tp','#22e58c','هدف'],['sl','#ff3355','وقف'],['time','#ffe600','مهلة'],['early','#ff9d2b','مبكر'],['other','#5f8a80','أخرى']];
+  const total = parts.reduce((s,p)=>s+(c[p[0]]||0),0);
+  if(!total) return '<div class="cls-bars"><i style="width:100%;background:rgba(255,255,255,.06)"></i></div><div class="cls-lg">لا إغلاقات بعد</div>';
+  const bars = parts.map(([k,col,lbl])=>{
+    const v = c[k]||0; if(!v) return '';
+    return `<i style="width:${(100*v/total).toFixed(1)}%;background:${col}" title="${lbl}: ${v}"></i>`;
+  }).join('');
+  const lg = parts.filter(p=>(c[p[0]]||0)>0).map(p=>`<span style="color:${p[1]}">■ ${p[2]} ${c[p[0]]}</span>`).join(' ');
+  return `<div class="cls-bars">${bars}</div><div class="cls-lg">${lg}</div>`;
+}
+function renderScalp(d){
+  const scalp = (d && d.scalp) || {};
   const el = $('scalp-box'); if(!el) return;
-  scalp = scalp || {};
-  if(scalp.enabled === false){
+  if(scalp.enabled === false && !scalp.strategies){
     el.innerHTML = '<div class="empty">الاستراتيجيات المتوازية معطلة (SCALP_ENABLED=0) — محرك الموجات يعمل وحده</div>';
     return;
   }
   const st = scalp.state || {};
+  const closed = (d && d.closed_signals) || [];
   const defs = [
     ['SCALP_FLOW','⚡ انجلال التدفق (S1)','s1','زخم CVD + SuperTrend + جدران السيولة كأهداف'],
-    ['SCALP_PROFILE','◈ ارتداد القيمة (S2)','s2','Volume Profile POC/VAH/VAL + امتصاص CVD + فيبو'],
+    ['SCALP_PROFILE','◈ ارتداد القيمة 2.0 (S2)','s2','مسح سيولة واستعادة + أهداف POC/VWAP قابلة للبلوغ'],
   ];
   el.innerHTML = defs.map(([key,title,cls,desc])=>{
     const s = (scalp.strategies||{})[key];
-    if(!s) return `<div class="scalp-card ${cls}"><h3>${title}</h3><div class="mut small">معطلة (SCALP_${key==='SCALP_FLOW'?'S1':'S2'}_ENABLED=0)</div></div>`;
+    if(!s) return `<div class="scalp-card ${cls}"><h3>${title}</h3><div class="mut small">غير مثبتة (${STRAT_META[key].env}=0)</div></div>`;
+    const on = s.enabled !== false;
     const closes = s.closes||{};
     const rej = s.rejects||{};
     const rejTop = Object.entries(rej).sort((a,b)=>b[1]-a[1]).slice(0,3)
@@ -697,13 +771,20 @@ function renderScalp(scalp){
     const cds = Object.entries(s.cooldowns||{});
     const cdTxt = cds.length ? cds.map(([k,v])=>`${esc(k)} (${Math.ceil(v/60)}د)`).join(' · ') : 'لا شيء';
     const dailyCls = (s.daily_pnl||0) >= 0 ? 'pos' : 'neg';
-    return `<div class="scalp-card ${cls}">
-      <h3>${title} <span class="pill ${cls==='s1'?'p-s1':'p-s2'}">مفعّلة</span></h3>
+    const cs = stratClosedStats(closed, key);
+    const csWr = cs.n ? (100*cs.w/cs.n).toFixed(0)+'%' : '—';
+    const statePill = on
+      ? `<span class="pill ${cls==='s1'?'p-s1':'p-s2'}">مفعّلة</span>`
+      : `<span class="pill p-cxl" title="من زر ⚙ الإعدادات — لا إشارات جديدة والصفقات المفتوحة تُدار">معطّلة (⚙)</span>`;
+    return `<div class="scalp-card ${cls} ${on?'':'dim'}">
+      <h3>${title} ${statePill}</h3>
       <div class="mut small" style="margin-bottom:6px">${desc}</div>
       <div class="srow"><span>مفتوح الآن</span><b>${s.open_n||0}</b></div>
       <div class="srow"><span>إشارات منذ الإقلاع</span><b>${s.signals||0}</b></div>
       <div class="srow"><span>جني جزئي / خروج مبكر</span><b>${s.partials||0} / ${s.early_exits||0}</b></div>
-      <div class="srow"><span>إغلاقات (هدف/وقف/أخرى)</span><b>${(closes.tp||0)}/${(closes.sl||0)}/${(closes.other||0)+(closes.time||0)+(closes.early||0)}</b></div>
+      <div class="srow"><span>إغلاقات</span><b>${(closes.tp||0)} هدف · ${(closes.sl||0)} وقف · ${((closes.time||0)+(closes.early||0)+(closes.other||0))} أخرى</b></div>
+      <div style="margin:2px 0 4px">${clsBars(closes)}</div>
+      <div class="srow"><span>الأداء (آخر 25 مغلقة)</span><b class="small">${cs.n} صفقة · WR ${csWr} · <span class="${cs.pnl>=0?'pos':'neg'}">${cs.pnl>=0?'+':''}${cs.pnl.toFixed(2)}$</span></b></div>
       <div class="srow"><span>ربح اليوم</span><b class="${dailyCls}">${(s.daily_pnl||0)>=0?'+':''}${(s.daily_pnl||0).toFixed(2)}$</b></div>
       <div class="srow"><span>${s.daily_loss_block?'⛔ قاطع خسارة اليوم مفعل':'تبريد الرموز'}</span><b class="small">${s.daily_loss_block?'أوقف الدخول حتى الغد':cdTxt}</b></div>
       <div class="srow"><span>آخر إشارة</span><b class="small">${s.last_signal_symbol?esc(s.last_signal_symbol)+' — '+esc((s.last_signal_at||'').slice(11,16)):('—'+' · أرفض: '+rejTop)}</b></div>
@@ -843,6 +924,7 @@ function renderPnlChart(trades){
     return '<rect x="'+(cx-barW/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+col+'"><title>'+esc(tip)+'</title></rect>';
   }).join('');
   const path = trades.map((t,i)=>(i===0?'M':'L')+x(i).toFixed(1)+','+y(t.cum_usdt).toFixed(1)).join(' ');
+  const area = path + ' L'+x(trades.length-1).toFixed(1)+','+y(0).toFixed(1)+' L'+x(0).toFixed(1)+','+y(0).toFixed(1)+' Z';
   const last = trades[trades.length-1];
   const lastCol = last.cum_usdt >= 0 ? '#00ff9c' : '#ff3355';
   const grid = [hi, (hi+lo)/2, lo].map(v =>
@@ -850,11 +932,81 @@ function renderPnlChart(trades){
     '<text x="'+(PAD_L-4)+'" y="'+(y(v)+3).toFixed(1)+'" fill="#5d8f6d" font-size="10" font-family="Share Tech Mono,monospace" text-anchor="end">'+v.toFixed(2)+'</text>').join('');
   const zero = '<line x1="'+PAD_L+'" y1="'+y(0).toFixed(1)+'" x2="'+(W-PAD_R)+'" y2="'+y(0).toFixed(1)+'" stroke="rgba(120,140,150,.5)" stroke-width="1"/>';
   box.innerHTML = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:260px" preserveAspectRatio="none">'+
-    grid+zero+bars+
+    '<defs><linearGradient id="pnlgrad" x1="0" y1="0" x2="0" y2="1">'+
+    '<stop offset="0%" stop-color="'+lastCol+'" stop-opacity=".28"/>'+
+    '<stop offset="100%" stop-color="'+lastCol+'" stop-opacity=".02"/></linearGradient></defs>'+
+    grid+zero+
+    '<path d="'+area+'" fill="url(#pnlgrad)" stroke="none"/>'+
+    bars+
     '<path d="'+path+'" fill="none" stroke="'+lastCol+'" stroke-width="2.2" opacity=".95"/>'+
-    '<circle cx="'+x(trades.length-1).toFixed(1)+'" cy="'+y(last.cum_usdt).toFixed(1)+'" r="4" fill="'+lastCol+'"/>'+
+    '<circle cx="'+x(trades.length-1).toFixed(1)+'" cy="'+y(last.cum_usdt).toFixed(1)+'" r="4" fill="'+lastCol+'"><animate attributeName="r" from="2" to="4" dur="0.5s" fill="freeze"/></circle>'+
     '<text x="'+(W-PAD_R)+'" y="'+(y(last.cum_usdt)-8).toFixed(1)+'" fill="'+lastCol+'" font-size="12" font-family="Share Tech Mono,monospace" text-anchor="end">'+(last.cum_usdt>=0?'+':'')+last.cum_usdt.toFixed(2)+'$</text>'+
   '</svg>';
+}
+
+// [EL2.1.0] عدّاد متحرك — القيمة تتسلق من قيمتها السابقة بدل القفز الصامت
+function countUp(el, to, decimals, prefix, suffix){
+  if(!el) return;
+  const from = parseFloat(el.dataset.num != null ? el.dataset.num : (String(el.textContent).replace(/[^0-9.\-]/g,''))) || 0;
+  el.dataset.num = to;
+  if(!isFinite(from) || from === to || window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    el.textContent = (prefix||'') + to.toFixed(decimals) + (suffix||''); return;
+  }
+  const t0 = performance.now(), dur = 650;
+  (function step(t){
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = (prefix||'') + (from + (to - from) * e).toFixed(decimals) + (suffix||'');
+    if(k < 1) requestAnimationFrame(step);
+  })(t0);
+}
+// [EL2.1.0] دونات معدل الربح — حلقة متدرجة بحركة رسم SMIL (بلا مكتبات)
+function renderWrDonut(p){
+  const el = $('perf-donut'); if(!el) return;
+  const wr = (p.win_rate==null) ? null : Math.max(0, Math.min(100, parseFloat(p.win_rate)));
+  if(wr == null){ el.innerHTML = ''; return; }
+  const n = p.total_closed_trades || 0;
+  const R = 46, C = 2 * Math.PI * R;
+  const arc = (C * wr / 100).toFixed(1), full = C.toFixed(1);
+  const pf = (p.profit_factor == null) ? '—' : (p.profit_factor >= 99 ? '∞' : parseFloat(p.profit_factor).toFixed(2));
+  const exp = (p.expectancy != null) ? parseFloat(p.expectancy).toFixed(2) : '—';
+  el.innerHTML = `<div class="donut" title="معدل الربح الكلي">
+    <svg width="110" height="110" viewBox="0 0 110 110">
+      <circle cx="55" cy="55" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="10"/>
+      <circle cx="55" cy="55" r="${R}" fill="none" stroke="url(#dgrad)" stroke-width="10" stroke-linecap="round"
+        stroke-dasharray="0 ${full}">
+        <animate attributeName="stroke-dasharray" from="0 ${full}" to="${arc} ${full}" dur="0.8s" fill="freeze"/>
+      </circle>
+      <defs><linearGradient id="dgrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#00ff9c"/><stop offset="100%" stop-color="#00e5ff"/></linearGradient></defs>
+    </svg>
+    <div class="donut-c"><b>${wr.toFixed(0)}%</b><span>معدل الربح<br>${n} صفقة</span></div>
+  </div>
+  <div class="mut small">
+    ⚖️ عامل الربح: <b style="color:#e6f7ff">${pf}</b> · 📊 توقع الصفقة: <b style="color:#e6f7ff">${exp}$</b><br>
+    📈 الأفضل/الأسوأ: ${p.best_trade?'<b class="pos">'+esc(p.best_trade.symbol||'—')+' +'+parseFloat(p.best_trade.pnl).toFixed(2)+'$</b>':'—'} /
+    ${p.worst_trade?'<b class="neg">'+esc(p.worst_trade.symbol||'—')+' '+parseFloat(p.worst_trade.pnl).toFixed(2)+'$</b>':'—'}
+  </div>`;
+}
+// [EL2.1.0] تفصيل الأداء لكل استراتيجية — من الإغلاقات الفعلية (صدق لا تلفيق)
+function renderPerfStrats(closed){
+  const el = $('perf-strats'); if(!el) return;
+  const agg = {};
+  (closed||[]).forEach(s=>{
+    const k = s.strategy_name || 'Elliott_Fibonacci';
+    if(!['closed','expired','cancelled'].includes(s.status)) return;
+    const a = agg[k] = agg[k] || {n:0, w:0, pnl:0};
+    a.n++;
+    const p = parseFloat(s.pnl_usdt||0); if(!isNaN(p)){ a.pnl += p; if(p>0) a.w++; }
+  });
+  const names = [['Elliott_Fibonacci','🌊 موجات إليوت','#00e5ff'],['SCALP_FLOW','⚡ انجلال التدفق','#00ff9c'],['SCALP_PROFILE','◈ ارتداد القيمة','#c792ea']];
+  const rows = names.filter(x=>agg[x[0]]).map(([k,lbl,col])=>{
+    const a = agg[k], wr = a.n ? (100*a.w/a.n).toFixed(0)+'%' : '—';
+    return `<tr><td style="color:${col}"><b>${lbl}</b></td><td>${a.n}</td><td>${wr}</td>
+      <td class="${a.pnl>=0?'pos':'neg'}"><b>${a.pnl>=0?'+':''}${a.pnl.toFixed(2)}$</b></td></tr>`;
+  }).join('');
+  el.innerHTML = rows ? `<div class="tbl-wrap"><table style="max-width:560px"><thead><tr>
+    <th>الاستراتيجية (آخر 25 مغلقة)</th><th>صفقات</th><th>معدل الربح</th><th>النتيجة</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>` : '';
 }
 
 function renderPerformance(d){
@@ -863,23 +1015,31 @@ function renderPerformance(d){
   if(!cards) return;
   const pfTxt = (p.profit_factor == null) ? '—' : (p.profit_factor >= 99 ? '∞' : parseFloat(p.profit_factor).toFixed(2));
   const net = parseFloat(p.net_profit_usdt || 0);
+  const today = parseFloat(p.today_pnl || 0);
+  const wr = (p.win_rate == null) ? null : parseFloat(p.win_rate);
   const arr = [
-    ['💵 صافي الربح', (net>=0?'+':'') + net.toFixed(2) + '$', net>0?'pos':(net<0?'neg':'')],
-    ['🎯 معدل الربح', (p.win_rate==null?'—':parseFloat(p.win_rate).toFixed(1)+'%'), (p.win_rate!=null&&p.win_rate>=50)?'pos':'gld'],
-    ['⚖️ عامل الربح', pfTxt, (p.profit_factor!=null&&p.profit_factor>=1.15)?'pos':(p.profit_factor!=null&&p.profit_factor<0.85?'neg':'gld')],
-    ['🧾 الصفقات المغلقة', p.total_closed_trades||0, ''],
-    ['📊 متوسط رابح/خاسر', (p.avg_win!=null?'+'+parseFloat(p.avg_win).toFixed(2):'—')+' / '+(p.avg_loss!=null?parseFloat(p.avg_loss).toFixed(2):'—')+'$', 'mut'],
-    ['📉 أقصى تراجع', '-'+parseFloat(p.max_drawdown_usdt||0).toFixed(2)+'$', 'neg'],
-    ['🗓 ربح اليوم', (parseFloat(p.today_pnl||0)>=0?'+':'')+parseFloat(p.today_pnl||0).toFixed(2)+'$', parseFloat(p.today_pnl||0)>=0?'pos':'neg'],
-    ['⏱ متوسط المدة', p.avg_duration_min!=null?parseFloat(p.avg_duration_min).toFixed(0)+' دقيقة':'—', 'mut'],
+    ['💵 صافي الربح', (net>=0?'+':'') + net.toFixed(2) + '$', net>0?'pos':(net<0?'neg':''), 'net'],
+    ['🎯 معدل الربح', (wr==null?'—':wr.toFixed(1)+'%'), (wr!=null&&wr>=50)?'pos':'gld', 'wr'],
+    ['⚖️ عامل الربح', pfTxt, (p.profit_factor!=null&&p.profit_factor>=1.15)?'pos':(p.profit_factor!=null&&p.profit_factor<0.85?'neg':'gld'), ''],
+    ['🧾 الصفقات المغلقة', p.total_closed_trades||0, '', ''],
+    ['📊 متوسط رابح/خاسر', (p.avg_win!=null?'+'+parseFloat(p.avg_win).toFixed(2):'—')+' / '+(p.avg_loss!=null?parseFloat(p.avg_loss).toFixed(2):'—')+'$', 'mut', ''],
+    ['📉 أقصى تراجع', '-'+parseFloat(p.max_drawdown_usdt||0).toFixed(2)+'$', 'neg', ''],
+    ['🗓 ربح اليوم', (today>=0?'+':'')+today.toFixed(2)+'$', today>=0?'pos':'neg', 'today'],
+    ['⏱ متوسط المدة', p.avg_duration_min!=null?parseFloat(p.avg_duration_min).toFixed(0)+' دقيقة':'—', 'mut', ''],
   ];
   cards.innerHTML = arr.map(c =>
-    `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join('');
+    `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}" ${c[3]?`data-k="${c[3]}"`:''}>${c[1]}</div></div>`).join('');
+  // [EL2.1.0] العدّادات المتحركة على البطاقات الرئيسية فقط
+  if(net != null) countUp(cards.querySelector('[data-k="net"]'), net, 2, net>=0?'+':'', '$');
+  if(wr != null) countUp(cards.querySelector('[data-k="wr"]'), wr, 1, '', '%');
+  countUp(cards.querySelector('[data-k="today"]'), today, 2, today>=0?'+':'', '$');
   const best = p.best_trade, worst = p.worst_trade;
   $('pnl-chart-meta').innerHTML =
     (best?'أفضل صفقة: <b class="pos">'+esc(best.symbol||'—')+' +'+parseFloat(best.pnl).toFixed(2)+'$</b>':'') +
     (worst?' · أسوأ صفقة: <b class="neg">'+esc(worst.symbol||'—')+' '+parseFloat(worst.pnl).toFixed(2)+'$</b>':'') +
     (p.expectancy!=null?' · توقع الصفقة: '+parseFloat(p.expectancy).toFixed(2)+'$':'');
+  renderWrDonut(p);
+  renderPerfStrats(d.closed_signals || []);
   renderPnlChart(p.trades || []);
 }
 
@@ -923,6 +1083,9 @@ let chartLevels = [], chartFetchAt = 0;
 let EW_ON = true, EW_SIG = '', EW_SERIES = [], EW_MARKS = null;
 // [FE1.9.12] موجات المحرك — الحساب من الاستراتيجية نفسها عبر /api/ew_strategy
 let EWX_ON = true, EWX_SIG = '', EWX_LINES = [], EWX_ZZ = null, EWX_MARKS = null, EWX_BUSY = false;
+// [EL2.1.0] طبقة مستويات القيمة — POC/VAH/VAL/VWAP من محرك السكالب نفسه (/api/scalp/levels)
+let LVL_ON = true, LVL_SIG = '', LVL_LINES = [], LVL_BUSY = false;
+const LVL_CACHE = {};
 
 function chartSelectedRow(){
   const s = ALLSTATE; if(!s || !chartSym) return null;
@@ -1050,6 +1213,7 @@ async function chartTick(force){
     chartApplyOverlays();
     try{ ewMaybe(); }catch(e){ console.error(e); }   // [FE1.9.11] إعادة بناء طبقة الموجات عند تغيّر البيانات
     try{ ewxMaybe(); }catch(e){ console.error(e); }  // [FE1.9.12] طبقة موجات المحرك (الاستراتيجية)
+    try{ lvlMaybe(); }catch(e){ console.error(e); }  // [EL2.1.0] طبقة مستويات القيمة (POC/VA/VWAP)
     const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
       + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
@@ -1244,6 +1408,70 @@ async function ewxMaybe(){
   finally{ EWX_BUSY = false; }
 }
 
+// ═══ [EL2.1.0] طبقة مستويات القيمة — POC/VAH/VAL/VWAP من /api/scalp/levels ═══
+// نفس حسابات strategies.indicators حرفيًا (Volume Profile + VWAP) — كاش 45ث في الخادم
+// وكاش محلي هنا، والرموز تغيّرها تمسح الخطوط فورًا (لا خطوط قديمة على رمز جديد).
+function lvlToggle(){
+  LVL_ON = !!($('lvl-toggle') && $('lvl-toggle').checked);
+  LVL_SIG = '';
+  lvlClear();
+  try{ chartTick(true); }catch(e){}
+}
+function lvlClear(){
+  if(CHART){ for(const l of LVL_LINES){ try{ CSERIES.removePriceLine(l); }catch(e){} } }
+  LVL_LINES = [];
+  const n = $('lvl-note'); if(n) n.textContent = '';
+}
+function lvlApply(d){
+  lvlClear();
+  if(!CHART || !CSERIES || !LVL_ON || !d) return;
+  const LW = window.LightweightCharts; const LS = (LW && LW.LineStyle) || {};
+  const push = (price, color, title, style, w) => {
+    if(price == null || isNaN(+price)) return;
+    try{ LVL_LINES.push(CSERIES.createPriceLine({ price:+price, color, lineWidth:w||1,
+      lineStyle:(style==null)?0:style, axisLabelVisible:true, title })); }catch(e){}
+  };
+  push(d.poc,  '#ffd24a', 'POC',  LS.Solid!=null?LS.Solid:0, 2);
+  push(d.vah,  '#b026ff', 'VAH',  LS.Dashed!=null?LS.Dashed:2, 1);
+  push(d.val,  '#b026ff', 'VAL',  LS.Dashed!=null?LS.Dashed:2, 1);
+  push(d.vwap, '#00e5ff', 'VWAP', LS.Dotted!=null?LS.Dotted:1, 1);
+  const n = $('lvl-note');
+  if(n) n.textContent = (d.poc!=null ? '◈ مستويات القيمة: POC '+fmt(d.poc) : '')
+    + (d.vah!=null&&d.val!=null ? ' · قيمة '+fmt(d.val)+'→'+fmt(d.vah) : '')
+    + (d.vwap!=null ? ' · VWAP '+fmt(d.vwap) : '')
+    + (d.source ? ' · ' + d.source : '');
+}
+async function lvlMaybe(){
+  if(!LVL_ON){ if(LVL_SIG !== 'off'){ lvlClear(); LVL_SIG = 'off'; } return; }
+  if(!CHART || !CSERIES || !chartSym || document.hidden) return;
+  const s = ALLSTATE; if(!s) return;
+  const tf = s.entry_timeframe || '5m';
+  const sig = chartSym + '|' + tf;
+  const cached = LVL_CACHE[sig];
+  if(cached && Date.now() - cached._ts < 45000){
+    if(LVL_SIG !== sig){ LVL_SIG = sig; lvlApply(cached); }
+    return;
+  }
+  if(LVL_BUSY) return;
+  LVL_BUSY = true;
+  const reqSig = sig;
+  try{
+    const d = await api('/api/scalp/levels?symbol=' + encodeURIComponent(chartSym) + '&tf=' + encodeURIComponent(tf));
+    if(d && d.poc != null){
+      d._ts = Date.now(); LVL_CACHE[reqSig] = d;
+      // سقف الكاش المحلي — درس SWR: أقدم إدخال يُطرد
+      const keys = Object.keys(LVL_CACHE);
+      if(keys.length > 60){
+        let old = keys[0]; for(const k of keys) if(LVL_CACHE[k]._ts < LVL_CACHE[old]._ts) old = k;
+        delete LVL_CACHE[old];
+      }
+      const curSig = chartSym + '|' + ((ALLSTATE && ALLSTATE.entry_timeframe) || '5m');
+      if(LVL_ON && curSig === reqSig) lvlApply(d);
+    }
+  }catch(e){ /* طبقة عرض — لا تكسر الشارت */ }
+  finally{ LVL_BUSY = false; }
+}
+
 async function refresh(){
   if (REFRESHING || document.hidden) return;  // [FE1.5.0] بلا تداخل طلبات ولا ضغط والإخفاء
   REFRESHING = true;
@@ -1259,7 +1487,7 @@ async function refresh(){
     safe(()=>paintTf(d.signal_timeframe || '15m'));  // [FE1.8.9] تلوين الفريم النشط
     safe(()=>chartPopulate(d));  // [FE1.9.10] قائمة رموز الشارت
     safe(()=>renderOpen(d.open_signals)); safe(()=>renderClosed(d.closed_signals));
-    safe(()=>renderScalp(d.scalp));  // [EL2.0.0] الاستراتيجيات المتوازية
+    safe(()=>renderScalp(d));  // [EL2.0.0→EL2.1.0] الاستراتيجيات المتوازية + الأداء لكل استراتيجية
     safe(()=>renderDetections(d.detections)); safe(()=>renderNotifs(d.notifications));
     safe(()=>renderPerformance(d)); safe(()=>renderGates(d.stats));
     safe(()=>chartTick());  // [FE1.9.10] تحديث الشارت مع كل دورة
@@ -1276,6 +1504,41 @@ async function toggleTrading(){
     const d = await api('/api/trading/toggle', {method:'POST'});
     toast(d.message); refresh();
   } catch(e){ toast('فشل التبديل: '+e.message); }
+}
+
+// ═══ [EL2.1.0] نافذة الإعدادات — تفعيل/تعطيل الاستراتيجيات الثلاث حيًا ═══
+// الحالة تُقرأ من settings.strategies في /api/all وتُحفظ في قاعدة البيانات بالخادم
+// — تصمد عبر إعادة النشر. التعطيل يمنع إشارات جديدة فقط (لا مواضع يتيمة).
+const STRAT_DEFS = [
+  {k:'Elliott_Fibonacci', icon:'🌊', label:'موجات إليوت + فيبوناتشي', desc:'المحرك الأصلي — كشف 15م وأوامر معلقة عند 0.382'},
+  {k:'SCALP_FLOW', icon:'⚡', label:'انجلال التدفق (سكالب زخم)', desc:'اندلاع CVD + SuperTrend + جدران سيولة على 5م'},
+  {k:'SCALP_PROFILE', icon:'◈', label:'ارتداد القيمة 2.0 (سكالب)', desc:'مسح سيولة واستعادة + أهداف POC/VWAP على 5م'},
+];
+function openSettings(){
+  renderSettingsList();
+  const m = $('settings-modal'); if(m) m.style.display = 'flex';
+}
+function closeSettings(){ const m = $('settings-modal'); if(m) m.style.display = 'none'; }
+function renderSettingsList(){
+  const el = $('settings-list'); if(!el) return;
+  const st = ((ALLSTATE||{}).settings||{}).strategies || {};
+  el.innerHTML = STRAT_DEFS.map(t=>{
+    const on = st[t.k] !== false;
+    return `<div class="set-row ${on?'':'off'}">
+      <div><div class="set-name">${t.icon} ${t.label}</div>
+      <div class="mut small">${esc(t.desc)} · ${on?'<span style=\'color:#00ff9c\'>مفعّلة</span>':'<span style=\'color:#ff3355\'>معطّلة</span>'}</div></div>
+      <label class="switch"><input type="checkbox" ${on?'checked':''} onchange="toggleStrategy('${t.k}', this)"><div class="slider"></div></label>
+    </div>`;
+  }).join('');
+}
+async function toggleStrategy(name, el){
+  try{
+    const d = await api('/api/strategy/toggle', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({strategy:name, enabled: el.checked})});
+    toast(d.message || 'تم التبديل');
+    if(ALLSTATE && d.settings) ALLSTATE.settings = d.settings;
+    renderSettingsList(); refresh();
+  }catch(e){ el.checked = !el.checked; toast('فشل التبديل: '+e.message); }
 }
 
 // [FE1.8.9] تبديل فريم الكشف/التنفيذ حيًا (5m/15m/1h/4h) — يحفظ في السيرفر ويصمد عبر النشر

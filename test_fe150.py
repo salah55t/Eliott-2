@@ -578,7 +578,7 @@ class TestProtectionAndPanel:
 
     def test_panel_hardening_marks(self):
         from panel import PANEL_HTML, BOT_VERSION
-        assert BOT_VERSION == "EL2.0.0"
+        assert BOT_VERSION == "EL2.1.0"
         assert "const esc = " in PANEL_HTML               # تهريب HTML
         assert "esc(n.message)" in PANEL_HTML             # الإشعارات مُهرّبة (كانت XSS)
         assert "esc(s.symbol)" in PANEL_HTML or "esc(x.symbol)" in PANEL_HTML

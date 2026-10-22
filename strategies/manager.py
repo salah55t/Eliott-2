@@ -57,6 +57,9 @@ STRATEGY_NAMES = ("SCALP_FLOW", "SCALP_PROFILE")
 HOST: Dict[str, Any] = {}
 _lock = threading.RLock()
 _started = False
+# [EL2.1.0] أعلام التفعيل لكل استراتيجية — من البيئة عند الإقلاع ومن اللوحة حيًا
+# (زر الإعدادات). التعطيل يمنع توليد إشارات جديدة فقط — الصفقات المفتوحة تُدار حتى الإغلاق.
+_enabled: Dict[str, bool] = {"SCALP_FLOW": True, "SCALP_PROFILE": True}
 _state: Dict[str, Any] = {"boot_at": None, "last_scan_at": None, "last_scan_ts": 0.0,
                           "cycles": 0, "last_error": "", "cvd_source_last": ""}
 _counters: Dict[str, Dict[str, Any]] = {
@@ -69,16 +72,33 @@ _cooldowns: Dict[str, Dict[str, float]] = {n: {} for n in STRATEGY_NAMES}
 _instances: Dict[str, Any] = {}
 
 
+def set_enabled(strategy: str, flag: bool) -> None:
+    """[EL2.1.0] تفعيل/تعطيل استراتيجية حيًا (زر الإعدادات باللوحة/تلغرام) —
+    الأعلام تنعكس فورًا على بوابات الدخول، والمثيلات تبقى جاهزة للإعادة."""
+    if strategy not in STRATEGY_NAMES:
+        raise ValueError(f"استراتيجية غير معروفة: {strategy}")
+    with _lock:
+        _enabled[strategy] = bool(flag)
+
+
+def get_enabled(strategy: str) -> bool:
+    with _lock:
+        return bool(_enabled.get(strategy, strategy in _instances))
+
+
 def attach_host(host: Dict[str, Any]) -> None:
-    """حقن اعتماديات المضيف (vnz يبنيها عند الإقلاع — الاختبارات تبني بدائل)."""
+    """حقن اعتماديات المضيف (vnz يبنيها عند الإقلاع — الاختبارات تبني بدائل).
+    [EL2.1.0] المثيلتان تُبنَيان دائمًا (جاهزتان للتفعيل الحي من اللوحة)،
+    أعلام البيئة S1/S2_ENABLED تحدد الحالة الابتدائية فقط."""
     global HOST
     HOST = dict(host or {})
     cfg = SCALP_CONFIG
     _instances.clear()
-    if S1_ENABLED:
-        _instances["SCALP_FLOW"] = FlowIgnition(cfg)
-    if S2_ENABLED:
-        _instances["SCALP_PROFILE"] = ProfileReversion(cfg)
+    _instances["SCALP_FLOW"] = FlowIgnition(cfg)
+    _instances["SCALP_PROFILE"] = ProfileReversion(cfg)
+    with _lock:
+        _enabled["SCALP_FLOW"] = S1_ENABLED
+        _enabled["SCALP_PROFILE"] = S2_ENABLED
     _state["boot_at"] = time.time()
 
 
@@ -244,7 +264,9 @@ def _entry_gates(strategy: str, symbol: str) -> Tuple[bool, str]:
     if not SCALP_ENABLED:
         return False, "معطل"
     if strategy not in _instances:
-        return False, "استراتيجية معطلة"
+        return False, "استراتيجية غير مثبتة"
+    if not get_enabled(strategy):
+        return False, "معطلة من الإعدادات"   # [EL2.1.0] زر الإعدادات — بلا إشارات جديدة
     if not (_hf("is_trading_enabled") or False):
         return False, "زر التداول معطل"
     blk = _hf("risk_entry_block_reason")
@@ -446,17 +468,21 @@ def _early_exits_all() -> None:
                 if name == "SCALP_PROFILE":
                     fail_lv = float(meta.get("fail_level") or 0)
                     if fail_lv > 0 and closes[-1] < fail_lv:
-                        _close_position(sig, closes[-1], "انهيار بنية القيمة (إغلاق تحت VAL بهامش واسع)", "early")
+                        # [EL2.1.0] مستوى الفشل الآن القاع المسحوب ذاته — إغلاق مغلق
+                        # تحته يعني أن الاستعادة فشلت والفرضية ماتت (خروج بسعر أفضل من الوقف غالبًا)
+                        _close_position(sig, closes[-1], "فشل استعادة القيمة (إغلاق مغلق تحت القاع المسحوب)", "early")
                         _bump(name, "early_exits")
                         continue
                 # مهلة الصفقة — شبكة أمان مزدوجة مع المراقبة
+                # [EL2.1.0] الارتداد له مهلة خاصة أقصر (45د) — إما يعمل سريعًا أو ماتت فرضيته
+                hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min
                 created = str(sig.get("created_at") or "")
                 if created:
                     try:
                         t0 = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
                         age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - t0).total_seconds() / 60.0
-                        if age_min > SCALP_CONFIG.max_hold_min:
-                            _close_position(sig, closes[-1], f"مهلة السكالب انتهت ({SCALP_CONFIG.max_hold_min} دقيقة)", "time")
+                        if age_min > hold_min:
+                            _close_position(sig, closes[-1], f"مهلة السكالب انتهت ({hold_min} دقيقة)", "time")
                     except ValueError:
                         pass
             except Exception:
@@ -541,7 +567,11 @@ def _monitor_cycle() -> Dict[str, int]:
             # 1) الوقف أولًا — دائمًا قبل أي ربح (عقيدة محمية لا تكسر)
             sl_now = float(sig.get("stop_loss") or 0)
             if sl_now > 0 and low_now <= sl_now:
-                _close_position(sig, sl_now, "وقف سكالب (دلتا/بنية)", "sl")
+                # [EL2.1.0] سبب الوقف موثوق بالمصدر — تحليل الأداء لكل استراتيجية يتطلب صدق التصنيف
+                sl_reason = ("وقف ارتداد القيمة (هيكلي تحت القاع المسحوب)"
+                             if sig.get("strategy_name") == "SCALP_PROFILE"
+                             else "وقف انجلال التدفق")
+                _close_position(sig, sl_now, sl_reason, "sl")
                 stats["sl"] += 1
                 continue
             meta = _sig_meta(sig)
@@ -552,6 +582,8 @@ def _monitor_cycle() -> Dict[str, int]:
                 if _partial_close(sig, tp1):
                     meta["partial_done"] = True
                     meta["be_done"] = True
+                    # BE نقي: الوقف لنقطة الدخول — المتبقي يطير نحو TP2 بلا مخاطرة
+                    # (عقيدة محمية: أي قفل أبكر من BE يقطع العداء نحو الهدف الثاني)
                     _hf("db_execute", "UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
                         (fill, json.dumps(meta, ensure_ascii=False), sig["id"]))
                     sig["stop_loss"] = fill
@@ -568,14 +600,15 @@ def _monitor_cycle() -> Dict[str, int]:
                 _close_position(sig, tp2, "هدف سكالب الثاني (نهاية الموجة القصيرة)", "tp")
                 stats["tp2"] += 1
                 continue
-            # 4) مهلة الصفقة
+            # 4) مهلة الصفقة — [EL2.1.0] مهلة الارتداد 45د من meta إن وجدت
+            hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min
             created = str(sig.get("created_at") or "")
             if created:
                 try:
                     t0 = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
                     age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - t0).total_seconds() / 60.0
-                    if age_min > SCALP_CONFIG.max_hold_min:
-                        _close_position(sig, live, f"مهلة السكالب انتهت ({SCALP_CONFIG.max_hold_min} دقيقة)", "time")
+                    if age_min > hold_min:
+                        _close_position(sig, live, f"مهلة السكالب انتهت ({hold_min} دقيقة)", "time")
                 except ValueError:
                     pass
         except Exception:
@@ -632,8 +665,10 @@ def start() -> None:
             HOST.get("logger") and HOST["logger"].info("[سكالب] معطل (SCALP_ENABLED=0)")
             return
         if not _instances:
-            HOST.get("logger") and HOST["logger"].info("[سكالب] لا استراتيجية مفعلة — لا إقلاع")
+            HOST.get("logger") and HOST["logger"].info("[سكالب] لا استراتيجية مثبتة — لا إقلاع")
             return
+        if not any(_enabled.values()):
+            HOST.get("logger") and HOST["logger"].info("[سكالب] كل الاستراتيجيات معطلة من الإعدادات — الخيوط تنطلق للمراقبة فقط")
         _started = True
         _state["boot_at"] = time.time()
     threading.Thread(target=_scan_loop, daemon=True, name="scalp-scan").start()
@@ -663,7 +698,7 @@ def snapshot() -> Dict[str, Any]:
     for name, inst in _instances.items():
         strategies[name] = {
             "label": getattr(inst, "label", name),
-            "enabled": True,
+            "enabled": bool(_enabled.get(name, True)),   # [EL2.1.0] الحالة الحقيقية من أعلام الإعدادات
             "open_n": _scalp_open_count(name),
             "signals": counters.get(name, {}).get("signals", 0),
             "partials": counters.get(name, {}).get("partials", 0),
@@ -679,7 +714,7 @@ def snapshot() -> Dict[str, Any]:
             "last_signal_symbol": counters.get(name, {}).get("last_signal_symbol"),
         }
     return {
-        "enabled": SCALP_ENABLED and bool(_instances),
+        "enabled": SCALP_ENABLED and any(_enabled.values()),
         "running": _started,
         "exec_tf": cfg.exec_tf,
         "symbols": resolve_symbols(),
@@ -702,6 +737,8 @@ scalp_manager = {
     "attach_host": attach_host,
     "start": start,
     "snapshot": snapshot,
+    "set_enabled": set_enabled,      # [EL2.1.0] تفعيل/تعطيل حي — زر الإعدادات
+    "get_enabled": get_enabled,
     "running": running,
     "scan_cycle": _scan_cycle,
     "monitor_cycle": _monitor_cycle,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات EL2.0.0 — تكامل المدير المتوازي مع المحرك واللوحة
+"""اختبارات EL2.1.0 — تكامل المدير المتوازي مع المحرك واللوحة
 =============================================================
   1) دورة حياة صفقة سكالب كاملة (ورقي): فتح بسعر حي → جزئي 50% عند TP1 + BE
      → إغلاق عند TP2 بمحاسبة صحيحة + تبريد رمز
@@ -145,7 +145,7 @@ def test_scalp_full_lifecycle_open_partial_be_then_tp2(host):
     assert st["partial"] == 1
     r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_FLOW'")[0]
     assert float(r["quantity"]) == pytest.approx(6.0)          # 50% من 12
-    assert float(r["stop_loss"]) == pytest.approx(100.0)       # BE عند نقطة الدخول
+    assert float(r["stop_loss"]) == pytest.approx(100.0)       # BE نقي عند نقطة الدخول (عقيدة محمية)
     assert float(r["realized_pnl_usdt"]) > 0
     meta = json.loads(r["meta_json"])
     assert meta["partial_done"] is True and meta["be_done"] is True
@@ -256,7 +256,7 @@ def test_early_exit_profile_structure_collapse(host, monkeypatch):
     sm._early_exits_all()
     r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_PROFILE'")[0]
     assert r["status"] == "closed"
-    assert "انهيار بنية القيمة" in (r["close_reason"] or "")
+    assert "فشل استعادة القيمة" in (r["close_reason"] or "")   # [EL2.1.0] النص الجديد
     assert sm._counters["SCALP_PROFILE"]["early_exits"] == 1
 
 
@@ -358,5 +358,118 @@ def test_panel_has_scalp_section_and_chips():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "EL2.0.0"
-    assert panel.BOT_VERSION == "EL2.0.0"
+    assert vnz.BOT_VERSION == "EL2.1.0"
+    assert panel.BOT_VERSION == "EL2.1.0"
+
+
+# ─────────────────────────────────────────────────────────────────────────────────
+# [EL2.1.0] مفاتيح الاستراتيجيات — زر الإعدادات
+# ─────────────────────────────────────────────────────────────────────────────────
+
+def test_strategy_toggle_gates_scalp_entries(clean_db, monkeypatch):
+    """تعطيل SCALP_PROFILE من الإعدادات يمنع دخوله بوابات الإشارات فورًا،
+    والتفعيل يعيده — والصفقات المفتوحة لا تُلمس (الإدارة مستمرة)."""
+    from strategies import manager as smgr
+    monkeypatch.setattr(smgr, "SCALP_ENABLED", True)
+    host = {"is_trading_enabled": lambda: True,
+            "risk_entry_block_reason": lambda: None,
+            "symbol_has_active": lambda s: False,
+            "db_query": lambda *a, **k: [],
+            "get_paper_balance": lambda: 10000.0}
+    smgr.attach_host(host)                     # الحقن أولًا ثم فحص البوابات
+    gates = smgr.scalp_manager["entry_gates"]
+    ok, why = gates("SCALP_PROFILE", "TEST/USDT")
+    assert ok, why
+    smgr.set_enabled("SCALP_PROFILE", False)
+    ok, why = gates("SCALP_PROFILE", "TEST/USDT")
+    assert not ok and "الإعدادات" in why
+    ok, _ = gates("SCALP_FLOW", "TEST/USDT")
+    assert ok                                   # الأخرى لا تتأثر
+    snap = smgr.snapshot()
+    assert snap["strategies"]["SCALP_PROFILE"]["enabled"] is False
+    assert snap["strategies"]["SCALP_FLOW"]["enabled"] is True
+    smgr.set_enabled("SCALP_PROFILE", True)
+    ok, _ = gates("SCALP_PROFILE", "TEST/USDT")
+    assert ok
+
+
+def test_strategy_toggle_persists_and_restores(clean_db):
+    """المفتاح يُخزن في قاعدة الحالة (strat_*) ويعود بعد إعادة الإقلاع (الاستعادة)."""
+    assert vnz.get_strategy_enabled("SCALP_FLOW") is True     # الافتراضي مفعّل
+    vnz.set_strategy_enabled("SCALP_FLOW", False, "اختبار")
+    assert vnz.get_strategy_enabled("SCALP_FLOW") is False
+    assert vnz._state_get_raw("strat_SCALP_FLOW") == "0"
+    # استعادة كما يفعل الإقلاع
+    from strategies import manager as smgr
+    smgr.attach_host({})
+    vnz.restore_strategy_flags()
+    assert smgr.get_enabled("SCALP_FLOW") is False
+    assert smgr.get_enabled("SCALP_PROFILE") is True
+    vnz.set_strategy_enabled("SCALP_FLOW", True, "اختبار")   # تنظيف
+
+
+def test_strategy_toggle_api_roundtrip(clean_db, tg_off):
+    """نقطة /api/strategy/toggle: تبديل صحيح + رفض أسماء غريبة + settings في /api/all."""
+    c = vnz.app.test_client()
+    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_PROFILE", "enabled": False})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["enabled"] is False
+    assert body["settings"]["strategies"]["SCALP_PROFILE"] is False
+    assert vnz.get_strategy_enabled("SCALP_PROFILE") is False
+    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_PROFILE", "enabled": True})
+    assert r.get_json()["settings"]["strategies"]["SCALP_PROFILE"] is True
+    r = c.post("/api/strategy/toggle", json={"strategy": "HACK", "enabled": True})
+    assert r.status_code == 400
+    # settings ظاهرة في /api/all
+    r = c.get("/api/all")
+    assert r.status_code == 200
+    assert r.get_json()["settings"]["strategies"]["SCALP_PROFILE"] is True
+    vnz.set_strategy_enabled("SCALP_PROFILE", True, "اختبار")   # تنظيف
+
+
+def test_elliott_gate_blocks_pending_creation(clean_db, tg_off, monkeypatch):
+    """تعطيل موجات إليوت يمنع create_pending_signal من ولادة أي أمر معلق —
+    البوابة أول سطر فلا يُلمس أي حساب ثقيل بعدها (نمرر كائنًا أدنى)."""
+    from types import SimpleNamespace
+    vnz.set_strategy_enabled("Elliott_Fibonacci", False, "اختبار")
+    try:
+        created = vnz.create_pending_signal(
+            "TEST/USDT", SimpleNamespace(symbol="TEST/USDT"), last_close=101.2)
+        assert created is False
+        assert vnz._get_reject_reason("TEST/USDT") == "موجات إليوت معطلة من الإعدادات"
+        rows = vnz.db.query("SELECT COUNT(*) AS n FROM signals WHERE status='pending'") or []
+        assert int(rows[0]["n"]) == 0
+    finally:
+        vnz.set_strategy_enabled("Elliott_Fibonacci", True, "اختبار")
+
+
+def test_scalp_levels_endpoint_shape(clean_db, monkeypatch):
+    """نقطة /api/scalp/levels تعيد POC/VAH/VAL/VWAP من حسابات indicators نفسها."""
+    import math
+    from strategies import indicators as _ind
+    rows = []
+    for i in range(80):
+        p = 100.0 + 2.5 * math.sin(i / 14.0 * 2 * math.pi)
+        o = 100.0 + 2.5 * math.sin((i - 0.5) / 14.0 * 2 * math.pi)
+        rows.append([float(i * 300000), o, max(o, p) + 0.3, min(o, p) - 0.3, p, 100.0])
+    monkeypatch.setattr(vnz, "fetch_ohlcv_raw",
+                        lambda s, tf, limit=160: (rows, "test"))
+    monkeypatch.setattr(vnz, "ENTRY_TIMEFRAME", "5m")
+    c = vnz.app.test_client()
+    r = c.get("/api/scalp/levels?symbol=TEST/USDT&tf=5m")
+    assert r.status_code == 200
+    d = r.get_json()
+    vp = _ind.volume_profile(_ind.rows_from_basic(rows), bins=48, lookback=72)
+    assert d["poc"] == pytest.approx(vp["poc"])
+    assert d["vah"] == pytest.approx(vp["vah"])
+    assert d["val"] == pytest.approx(vp["val"])
+    assert d["vwap"] is not None and d["st_dir"] in (-1.0, 1.0)
+    # كاش: النداء الثاني يخدم من الكاش (المزود لا يُستدعى ثانيةً — العدّاد لا يتغير)
+    calls = {"n": 0}
+    def counting(s, tf, limit=160):
+        calls["n"] += 1
+        return (rows, "test")
+    monkeypatch.setattr(vnz, "fetch_ohlcv_raw", counting)
+    r2 = c.get("/api/scalp/levels?symbol=TEST/USDT&tf=5m")
+    assert r2.status_code == 200 and calls["n"] == 0      # من الكاش

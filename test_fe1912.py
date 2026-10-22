@@ -362,6 +362,6 @@ def test_panel_engine_layer_legend_and_note():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync_vnz_panel():
-    assert vnz.BOT_VERSION == "EL2.0.0"
-    assert panel.BOT_VERSION == "EL2.0.0"
+    assert vnz.BOT_VERSION == "EL2.1.0"
+    assert panel.BOT_VERSION == "EL2.1.0"
     assert panel.BOT_VERSION == vnz.BOT_VERSION
