@@ -329,7 +329,7 @@ class TestDashboardAPI:
         r = client.get("/health")
         assert r.status_code == 200
         body = r.get_json()
-        assert body["version"] == "EL2.2.0"
+        assert body["version"] == "EL2.3.0"
         assert body["strategy"] == "Elliott_Fibonacci"
         assert body["mode"] == "paper"
 
@@ -865,7 +865,7 @@ class TestWebSocketPriceFeedFE120:
         r = client.get("/api/ws/status")
         assert r.status_code == 200
         data = r.get_json()
-        assert data["version"] == "EL2.2.0"
+        assert data["version"] == "EL2.3.0"
         assert data["enabled"] is True
         assert "prices" in data and "subscriptions" in data and "candles" in data
 
@@ -883,7 +883,7 @@ class TestWebSocketPriceFeedFE120:
         client = vnz.app.test_client()
         data = client.get("/health").get_json()
         assert data["live_feed"] in ("websocket", "rest")
-        assert data["version"] == "EL2.2.0"
+        assert data["version"] == "EL2.3.0"
 
     def test_ws_exchange_unknown_provider_raises(self):
         with pytest.raises(ValueError):

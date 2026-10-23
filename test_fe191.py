@@ -324,5 +324,5 @@ def test_live_price_reads_from_ws_price(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "EL2.2.0"
-    assert panel.BOT_VERSION == "EL2.2.0"
+    assert vnz.BOT_VERSION == "EL2.3.0"
+    assert panel.BOT_VERSION == "EL2.3.0"

@@ -35,7 +35,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "EL2.2.0"
+BOT_VERSION = "EL2.3.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -252,15 +252,9 @@ PANEL_HTML = r"""<!DOCTYPE html>
   /* [EL2.0.0] حبوب الاستراتيجيات المتوازية — شارات الصفوف وبطاقات القسم */
   .p-ew   { background:rgba(230,247,255,.07); color:#e6f7ff; border-color:rgba(230,247,255,.25); }
   .p-s1   { background:rgba(0,229,255,.12); color:var(--cyan); border-color:rgba(0,229,255,.45); font-weight:700; }
-  .p-t    { background:rgba(100,216,203,.12); color:#64d8cb; border-color:rgba(100,216,203,.5); font-weight:700; }
-  .p-z    { background:rgba(255,176,32,.14); color:#ffb020; border-color:rgba(255,176,32,.55); font-weight:700; }
   .scalp-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
   .scalp-card { position:relative; overflow:hidden; border:1px solid rgba(0,229,255,.22); border-radius:14px; padding:14px 16px; background:linear-gradient(160deg,rgba(0,229,255,.07),rgba(10,15,22,.35)); }
-  .scalp-card.t { border-color:rgba(100,216,203,.25); background:linear-gradient(160deg,rgba(100,216,203,.07),rgba(10,15,22,.35)); }
-  .scalp-card.z { border-color:rgba(255,176,32,.28); background:linear-gradient(160deg,rgba(255,176,32,.07),rgba(10,15,22,.35)); }
   .scalp-card h3 { margin:0 0 6px; font-size:15px; color:var(--cyan); display:flex; align-items:center; gap:8px; }
-  .scalp-card.t h3 { color:#64d8cb; }
-  .scalp-card.z h3 { color:#ffb020; }
   .scalp-card .srow { display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,.06); }
   .scalp-card .srow:last-child { border-bottom:none; }
   .scalp-card .srow b { font-variant-numeric:tabular-nums; }
@@ -432,7 +426,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <label class="switch"><input type="checkbox" id="real-toggle" onchange="toggleReal(this)"><div class="slider"></div></label>
     </div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
-    <button class="act" id="settings-btn" title="تفعيل/تعطيل الاستراتيجيات الأربع — الحالة محفوظة وتصمد عبر إعادة النشر" onclick="openSettings()">⚙ الإعدادات</button>
+    <button class="act" id="settings-btn" title="تفعيل/تعطيل الاستراتيجيتان — الحالة محفوظة وتصمد عبر إعادة النشر" onclick="openSettings()">⚙ الإعدادات</button>
     <div class="tf-ctl" title="فريم الكشف والتنفيذ — التبديل يلغي الأوامر الورقية المعلقة ويبدأ فحصًا جديدًا على الفريم المختار (الاختيار محفوظ ويصمد عبر إعادة النشر)">
       <span class="rlbl">الفريم:</span>
       <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
@@ -455,7 +449,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>⚡🐂💥 الاستراتيجيات المتوازية — Eliott+2 <span class="mut small">— ثلاث استراتيجيات سكالبينغ سبوت على باينانس تعمل جنبًا إلى جنب مع موجات إليوت على نفس الرصيد: «انجلال التدفق» (زخم CVD + SuperTrend + جدران السيولة كأهداف) · «ركوب التيار» (تصحيح في ترند قائم + استئناف دلتا — EL2.2.0) · «انفجار الاختناق» (بولنجر داخل كيلتنر + انفجار حجم ودلتا — EL2.2.0) — الحماية نفسها: جزئي 50% عند الهدف الأول + BE + وقف أولًا. ارتداد القيمة أُزيل نهائيًا بعد فشله في بلوغ الأهداف</span></h2>
+    <h2>⚡🌊 الاستراتيجيتان المتوازيتان — Eliott+2 <span class="mut small">— موجات إليوت (المنطق الأصلي — مدعومة بفلتر التدفق: SuperTrend صاعد + ADX≥20 + CVD سليم + فوق VWAP قبل ولادة أي إشارة) + «انجلال التدفق» (زخم CVD + SuperTrend + جدران السيولة كأهداف) — على نفس الرصيد وبنفس الحماية: جزئي 50% عند الهدف الأول + BE + وقف أولًا. ركوب التيار وانفجار الاختناق وارتداد القيمة أُزيلت نهائيًا بقرار الحاكم (EL2.3.0)</span></h2>
     <div id="scalp-box" class="scalp-cards"></div>
   </section>
 
@@ -755,12 +749,10 @@ function renderScanner(d){
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-// [EL2.0.0] شارة الاستراتيجية على كل صف — موجات/تدفق/قيمة
+// [EL2.0.0→EL2.3.0] شارة الاستراتيجية على كل صف — موجات/تدفق
 function stratChip(s){
   const n = s.strategy_name || 'Elliott_Fibonacci';
   if(n==='SCALP_FLOW')    return '<span class="pill p-s1" title="سكالب انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة">⚡ تدفق</span> ';
-  if(n==='SCALP_TREND')   return '<span class="pill p-t" title="سكالب ركوب التيار: تصحيح في ترند قائم + استئناف دلتا — EL2.2.0">🐂 تيار</span> ';
-  if(n==='SCALP_SQUEEZE') return '<span class="pill p-z" title="سكالب انفجار الاختناق: بولنجر داخل كيلتنر + انفجار بجسمه وحجمه — EL2.2.0">💥 اختناق</span> ';
   return '';
 }
 
@@ -769,8 +761,6 @@ function stratChip(s){
 // محسوب من الصفقات المغلقة (آخر 25) لكل استراتيجية — صدق الأرقام لا الديكور.
 const STRAT_META = {
   'SCALP_FLOW':    {icon:'⚡', color:'#00ff9c', env:'SCALP_S1_ENABLED'},
-  'SCALP_TREND':   {icon:'🐂', color:'#64d8cb', env:'SCALP_TREND_ENABLED'},
-  'SCALP_SQUEEZE': {icon:'💥', color:'#ffb020', env:'SCALP_SQUEEZE_ENABLED'},
 };
 function stratClosedStats(closed, key){
   const a = {n:0, w:0, pnl:0};
@@ -805,8 +795,6 @@ function renderScalp(d){
   const closed = (d && d.closed_signals) || [];
   const defs = [
     ['SCALP_FLOW','⚡ انجلال التدفق (S1)','s1','زخم CVD + SuperTrend + جدران السيولة كأهداف'],
-    ['SCALP_TREND','🐂 ركوب التيار (S2)','t','تصحيح إلى EMA20/VWAP في ترند قائم + شمعة استئناف دلتاها موجبة — وقف تحت قاع التصحيح (EL2.2.0)'],
-    ['SCALP_SQUEEZE','💥 انفجار الاختناق (S3)','z','بولنجر داخل كيلتنر + انفجار بجسم اندفاعي وحجم 1.4× ودلتا موجبة — وقف تحت قاعدة الاختناق (EL2.2.0)'],
   ];
   el.innerHTML = defs.map(([key,title,cls,desc])=>{
     const s = (scalp.strategies||{})[key];
@@ -822,7 +810,7 @@ function renderScalp(d){
     const cs = stratClosedStats(closed, key);
     const csWr = cs.n ? (100*cs.w/cs.n).toFixed(0)+'%' : '—';
     const statePill = on
-      ? `<span class="pill ${{s1:'p-s1',t:'p-t',z:'p-z'}[cls]||'p-s1'}">مفعّلة</span>`
+      ? `<span class="pill ${ {s1:'p-s1'}[cls]||'p-s1' }">مفعّلة</span>`
       : `<span class="pill p-cxl" title="من زر ⚙ الإعدادات — لا إشارات جديدة والصفقات المفتوحة تُدار">معطّلة (⚙)</span>`;
     return `<div class="scalp-card ${cls} ${on?'':'dim'}">
       <h3>${title} ${statePill}</h3>
@@ -1046,8 +1034,7 @@ function renderPerfStrats(closed){
     a.n++;
     const p = parseFloat(s.pnl_usdt||0); if(!isNaN(p)){ a.pnl += p; if(p>0) a.w++; }
   });
-  const names = [['Elliott_Fibonacci','🌊 موجات إليوت','#00e5ff'],['SCALP_FLOW','⚡ انجلال التدفق','#00ff9c'],
-    ['SCALP_TREND','🐂 ركوب التيار','#64d8cb'],['SCALP_SQUEEZE','💥 انفجار الاختناق','#ffb020']];
+  const names = [['Elliott_Fibonacci','🌊 موجات إليوت','#00e5ff'],['SCALP_FLOW','⚡ انجلال التدفق','#00ff9c']];
   const rows = names.filter(x=>agg[x[0]]).map(([k,lbl,col])=>{
     const a = agg[k], wr = a.n ? (100*a.w/a.n) : null;
     const wrTxt = (wr==null)?'—':wr.toFixed(0)+'%';
@@ -1645,14 +1632,12 @@ async function toggleTrading(){
   } catch(e){ toast('فشل التبديل: '+e.message); }
 }
 
-// ═══ [EL2.1.0] نافذة الإعدادات — تفعيل/تعطيل الاستراتيجيات الثلاث حيًا ═══
+// ═══ [EL2.3.0] نافذة الإعدادات — تفعيل/تعطيل الاستراتيجيتان حيًا ═══
 // الحالة تُقرأ من settings.strategies في /api/all وتُحفظ في قاعدة البيانات بالخادم
 // — تصمد عبر إعادة النشر. التعطيل يمنع إشارات جديدة فقط (لا مواضع يتيمة).
 const STRAT_DEFS = [
-  {k:'Elliott_Fibonacci', icon:'🌊', label:'موجات إليوت + فيبوناتشي', desc:'المحرك الأصلي — كشف 15م وأوامر معلقة عند 0.382'},
+  {k:'Elliott_Fibonacci', icon:'🌊', label:'موجات إليوت + فيبوناتشي', desc:'المحرك الأصلي — كشف 15م وأوامر معلقة عند 0.382 — مدعوم بفلتر التدفق (ST صاعد + ADX≥20 + CVD سليم + فوق VWAP)'},
   {k:'SCALP_FLOW', icon:'⚡', label:'انجلال التدفق (سكالب زخم)', desc:'اندلاع CVD + SuperTrend + جدران سيولة على 5م'},
-  {k:'SCALP_TREND', icon:'🐂', label:'ركوب التيار (سكالب تصحيح)', desc:'تصحيح إلى EMA20/VWAP في ترند قائم + استئناف دلتا على 5م (EL2.2.0)'},
-  {k:'SCALP_SQUEEZE', icon:'💥', label:'انفجار الاختناق (سكالب تقلب)', desc:'بولنجر داخل كيلتنر + انفجار بجسمه وحجمه ودلتاه على 5م (EL2.2.0)'},
 ];
 function openSettings(){
   renderSettingsList();

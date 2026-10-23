@@ -163,15 +163,15 @@ services:
         value: "360"
       - key: MEM_CRITICAL_MB
         value: "440"
-      # [EL2.2.0] الاستراتيجيات المتوازية — تدفق + تيار + اختناق جنبًا إلى جنب مع الموجات
+      # [EL2.3.0] الاستراتيجيتان المتوازيتان — موجات إليوت (بفلتر التدفق) + انجلال التدفق
       - key: SCALP_ENABLED
         value: "1"
       - key: SCALP_S1_ENABLED
         value: "1"       # انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة
-      - key: SCALP_TREND_ENABLED
-        value: "1"       # ركوب التيار: تصحيح في ترند قائم + استئناف دلتا (EL2.2.0)
-      - key: SCALP_SQUEEZE_ENABLED
-        value: "1"       # انفجار الاختناق: بولنجر داخل كيلتنر + انفجار جسمه (EL2.2.0)
+      - key: ELLIOTT_FLOW_FILTER
+        value: "1"       # [EL2.3.0] فلتر التدفق لإشارات الموجات: ST صاعد + ADX≥20 + CVD سليم + فوق VWAP
+      - key: ELLIOTT_FLOW_ADX_MIN
+        value: "20"      # أرضية طاقة الاتجاه لبوابة F2
       - key: SCALP_EXEC_TF
         value: "5m"
       - key: SCALP_SYMBOLS_N

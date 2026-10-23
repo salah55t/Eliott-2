@@ -155,10 +155,10 @@ class TestLadderRescue:
 class TestVersion:
 
     def test_vnz_version(self):
-        assert vnz.BOT_VERSION == "EL2.2.0"
+        assert vnz.BOT_VERSION == "EL2.3.0"
 
     def test_panel_version(self):
-        assert panel_mod.BOT_VERSION == "EL2.2.0"
+        assert panel_mod.BOT_VERSION == "EL2.3.0"
 
     def test_new_counter_in_stats(self):
         assert "rejected_no_target" in vnz.scan_stats

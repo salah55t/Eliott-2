@@ -15,8 +15,6 @@
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import math
-
 # ─────────────────────────────────────────────────────────────────────────────
 # متوسطات أساسية
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,46 +240,6 @@ def vwap_rolling(rows: Sequence[Dict[str, float]]) -> Optional[float]:
     if vv <= 0:
         return None
     return pv / vv
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# بولنجر وكيلتنر — قناتا التقلب لاستراتيجية انفجار الاختناق
-# ─────────────────────────────────────────────────────────────────────────────
-
-def bollinger(closes: Sequence[float], period: int = 20,
-              mult: float = 2.0) -> Optional[Dict[str, float]]:
-    """[EL2.2.0] بولنجر الكلاسيكية — SMA ± mult×الانحراف المعياري (عيّنة ddof=0
-    كما في منصات الرسم). يعيد آخر قيمة {"upper","mid","lower","width"} أو None."""
-    if len(closes) < period or period <= 0:
-        return None
-    mid = sma(closes, period)[-1]
-    if mid != mid:
-        return None
-    win = [float(v) for v in closes[-period:]]
-    mean = mid
-    var = sum((v - mean) ** 2 for v in win) / period
-    sd = math.sqrt(max(0.0, var))
-    upper, lower = mean + mult * sd, mean - mult * sd
-    return {"upper": upper, "mid": mean, "lower": lower,
-            "width": (upper - lower)}
-
-
-def keltner(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
-            period: int = 20, mult: float = 1.5) -> Optional[Dict[str, float]]:
-    """[EL2.2.0] كيلتنر — EMA(mid price) ± mult×ATR(RMA ويلدر). قناة التقلب
-    الثانية التي يُقاس عليها الاختناق: بولنجر داخل كيلتنر = طاقة مضغوطة.
-    يعيد آخر قيمة {"upper","mid","lower","width"} أو None."""
-    if len(closes) < period + 2 or period <= 0:
-        return None
-    mids = [(float(highs[i]) + float(lows[i]) + float(closes[i])) / 3.0
-            for i in range(len(closes))]
-    mid_series = ema(mids, period)
-    mid = mid_series[-1]
-    a = atr(highs, lows, closes, period)
-    if mid != mid or a is None or a <= 0:
-        return None
-    upper, lower = mid + mult * a, mid - mult * a
-    return {"upper": upper, "mid": mid, "lower": lower, "width": (upper - lower)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

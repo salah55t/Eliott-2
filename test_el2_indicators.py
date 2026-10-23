@@ -263,57 +263,8 @@ def test_closed_rows_fallback_without_now():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [EL2.2.0] بولنجر وكيلتنر وDI — أدوات انفجار الاختناق
+# [EL2.3.0] DI — جوهر حسابات ADX (بقيت بعد إزالة بولنجر/كيلتنر مع الاختناق)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def test_bollinger_flat_market_zero_width():
-    closes = [100.0] * 30
-    bb = ind.bollinger(closes, 20, 2.0)
-    assert bb is not None
-    assert bb["upper"] == pytest.approx(100.0)
-    assert bb["mid"] == pytest.approx(100.0)
-    assert bb["lower"] == pytest.approx(100.0)
-    assert bb["width"] == pytest.approx(0.0)
-
-
-def test_bollinger_known_sigma():
-    # نصف القيم 102 ونصفها 98 → متوسط 100 وσ العينة = 2 → العرض = 8
-    closes = [102.0] * 10 + [98.0] * 10
-    bb = ind.bollinger(closes, 20, 2.0)
-    assert bb["mid"] == pytest.approx(100.0)
-    assert bb["upper"] == pytest.approx(104.0)
-    assert bb["lower"] == pytest.approx(96.0)
-    assert bb["width"] == pytest.approx(8.0)
-
-
-def test_bollinger_short_series_none():
-    assert ind.bollinger([100.0] * 10, 20, 2.0) is None
-
-
-def test_keltner_atr_bands_symmetric():
-    highs = [101.0] * 30
-    lows = [99.0] * 30
-    closes = [100.0] * 30
-    kc = ind.keltner(highs, lows, closes, 20, 1.5)
-    assert kc is not None
-    assert kc["mid"] == pytest.approx(100.0)
-    # ATR = 2.0 → النطاق ± 3.0
-    assert kc["upper"] == pytest.approx(103.0)
-    assert kc["lower"] == pytest.approx(97.0)
-    assert kc["width"] == pytest.approx(6.0)
-
-
-def test_keltner_short_series_none():
-    assert ind.keltner([100.0] * 5, [100.0] * 5, [100.0] * 5, 20, 1.5) is None
-
-
-def test_squeeze_condition_flat_market():
-    """السوق المختنق الحقيقي: بولنجر (σ صغير) داخل كيلتنر (ATR ذيول) —
-    الحالة المرجعية لاستراتيجية انفجار الاختناق."""
-    closes = [100.0] * 30
-    bb = ind.bollinger(closes, 20, 2.0)
-    kc = ind.keltner([100.2] * 30, [99.8] * 30, closes, 20, 1.5)
-    assert bb["width"] < kc["width"]
 
 
 def test_di_directional_separation():

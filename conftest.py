@@ -23,6 +23,22 @@ def _isolate_weekly_high(monkeypatch):
     vnz._tp_week_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_elliott_flow_filter(monkeypatch):
+    """[EL2.3.0] عزل فلتر التدفق عن الشبكة في كل الاختبارات: حكم fail-open موثّق
+    (unavailable) — نفس عقد _isolate_weekly_high. الاختبار المتخصص
+    (test_el23_flow_filter.py) يتجاوز هذه المصيدة بmonkeypatch الخاص به لفحص
+    المنطق الحقيقي والبوابات على بيانات صناعية (صفر شبكة)."""
+    import vnz
+    monkeypatch.setattr(
+        vnz, "elliott_flow_verdict",
+        lambda symbol, direction="BULLISH": {
+            "ok": True, "unavailable": True, "gate": None,
+            "reason": "عزل الاختبارات — فلتر التدفق fail-open",
+            "meta": {"flow_filter": "unavailable"}})
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_default_sqlite_schema():
     """يضمن وجود جداول القاعدة الافتراضية قبل أي اختبار يلمسها بلا مصباح."""

@@ -578,7 +578,7 @@ def test_api_binance_status_endpoint(client, clean_db, real_reset, monkeypatch):
     assert body["connected"] is True
     assert body["usdt_free"] == 321.0
     assert body["real_mode"] is False
-    assert body["version"] == "EL2.2.0"
+    assert body["version"] == "EL2.3.0"
 
 
 def test_health_mode_paper_and_real(client, clean_db, real_reset, monkeypatch):
@@ -623,7 +623,7 @@ def test_panel_cyber_structure():
     assert "banner-real" in html and "banner-paper" in html
     assert "p-real" in html and "modePill" in html
     import panel as panel_mod
-    assert panel_mod.BOT_VERSION == "EL2.2.0"
+    assert panel_mod.BOT_VERSION == "EL2.3.0"
 
 
 def test_ddl_migration_adds_real_columns(clean_db):

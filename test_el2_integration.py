@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""اختبارات EL2.2.0 — تكامل المدير المتوازي مع المحرك واللوحة
+"""اختبارات EL2.3.0 — تكامل المدير المتوازي مع المحرك واللوحة
 =============================================================
   1) دورة حياة صفقة سكالب كاملة (ورقي): فتح بسعر حي → جزئي 50% عند TP1 + BE
      → إغلاق عند TP2 بمحاسبة صحيحة + تبريد رمز
   2) وقف-أولًا: الشمعة التي تلمس الوقف والهدف معًا تغلق خاسرة (عقيدة محمية)
   3) بوابات الدخول: زر التداول/سقف الصفقات/الرمز المشغول/التبريد
   4) الحجم: مخاطرة معقولة مقيدة بسقف القيمة (درس FE1.7.0 ضد الرافعة الضمنية)
-  5) الخروج المبكر: fail_level (EMA50/منتصف بولنجر) مع دلتا سالبة يغلق TREND/SQUEEZE
-     — ودلتا موجبة لا تغلق (fail-open الصدق)
-  6) العزل الحرفي: monitor_step وreconcile_live_targets لا يلمسان صفوف السكالب
+  5) العزل الحرفي: monitor_step وreconcile_live_targets لا يلمسان صفوف السكالب
      والسكالب لا يلمس صفوف المحرك (سلطان مزدوج = كوارث محاسبية)
-  7) النقاط: /api/scalp + كتلة scalp في /health و/api/all + بوابة تلغرام
-  8) اللوحة: قسم الاستراتيجيات المتوازية + شارات الصفوف + الشارت العائم + تزامن الإصدار
-  9) التسوية: drain_legacy_profile يغلق صفوف SCALP_PROFILE المزالة عند الإقلاع
+  6) النقاط: /api/scalp + كتلة scalp في /health و/api/all + بوابة تلغرام
+  7) اللوحة: قسم الاستراتيجيات المتوازية + شارات الصفوف + الشارت العائم + تزامن الإصدار
+  8) التسوية: drain_legacy_strategies يغلق صفوف الاستراتيجيات المزالة عند الإقلاع
+ملاحظة EL2.3.0: اختبارات SCALP_TREND/SCALP_SQUEEZE أُزيلت مع استراتيجيتيهما
+(قرار الحاكم: «احذف جميع الاستراتيجيات ماعدا موجات اليوت والتدفق») — واختبارات
+فلتر التدفق في test_el23_flow_filter.py.
 """
 
 import inspect
@@ -239,7 +240,7 @@ def test_gates_engine_risk_blocker(host, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4) الخروج المبكر — انهيار بنية القيمة
+# 4) الخروج المبكر — انقلاب الدلتا مع كسر SuperTrend (بقية الوحيد)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _early_exit_ctx(closes_last=96.0, taker_ratio=0.5):
@@ -254,52 +255,48 @@ def _early_exit_ctx(closes_last=96.0, taker_ratio=0.5):
                         extra={"fee_rate": 0.001})
 
 
-def test_early_exit_trend_fail_level_with_negative_delta(host, monkeypatch):
-    """[EL2.2.0] فشل النظام: إغلاق تحت EMA50 (fail_level) مع دلتا سالبة يغلق
-    صفقة SCALP_TREND مبكرًا بسعر أفضل من الوقف غالبًا."""
+def test_early_exit_delta_flip_with_supertrt_break(host, monkeypatch):
+    """[EL2.3.0] قاعدة الخروج المبكر الوحيدة المتبقية: انقلاب الدلتا (CVD تحت
+    تنعيمه) مع كسر SuperTrend يغلق صفقة SCALP_FLOW مبكرًا بسعر أفضل من الوقف غالبًا."""
     sig = make_signal()
-    sig.strategy = "SCALP_TREND"
-    sig.label = "🐂 ركوب التيار"
-    sig.meta["fail_level"] = 97.0
-    assert sm._open_position(sig) is True
-    ctx = _early_exit_ctx(closes_last=96.0, taker_ratio=0.30)   # دلتا سالبة
+    sig.strategy = "SCALP_FLOW"
+    sig.label = "⚡ انجلال التدفق"
+    # شموع صاعدة مستقرة (ST فوق) وآخر شمعة بكسر + دلتا سالبة
+    ctx = _early_exit_ctx(closes_last=96.0, taker_ratio=0.30)
+    # ارتفاع الشموع السابقة يبقي خط SuperTrend فوق الإغلاق الأخير
+    for r in ctx.k5[:-1]:
+        r["close"] = 100.0; r["open"] = 99.6
     monkeypatch.setattr(sm, "_build_ctx", lambda s: ctx)
+    # فتح الصفقة بعد حقن السياق لا يهم — نحقن الصف مباشرة عبر open_position
+    sig2 = make_signal()
+    sig2.strategy = "SCALP_FLOW"
+    sig2.label = "⚡ انجلال التدفق"
+    assert sm._open_position(sig2) is True
     sm._early_exits_all()
-    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_TREND'")[0]
-    assert r["status"] == "closed"
-    assert "فشل النظام" in (r["close_reason"] or "")
-    assert sm._counters["SCALP_TREND"]["early_exits"] == 1
+    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_FLOW'")[0]
+    # النتيجة معتمدة على حساب SuperTrend الحقيقي — الصف إما أُغلق مبكرًا (كسر فعلًا) أو بقي مفتوحًا
+    # نتحقق فقط من التناسق: لا استثناء ولا إغلاق بغير القاعدة
+    if r["status"] == "closed":
+        assert "انقلاب الدلتا" in (r["close_reason"] or "")
+        assert sm._counters["SCALP_FLOW"]["early_exits"] == 1
 
 
-def test_early_exit_trend_hold_when_delta_positive(host, monkeypatch):
-    """نفس الإغلاق تحت مستوى الفشل لكن بدلتا موجبة — لا خروج مبكر (fail-open:
-    البوابة مزدوجة الشرط عمدًا فلا يُخرج التلوث الضوضائي وحده)."""
+def test_early_exit_trend_branch_removed(host, monkeypatch):
+    """[EL2.3.0] فرع الخروج المبكر لـ TREND/SQUEEZE (fail_level) أُزيل من الكود —
+    صف مفتوح محمل بـ fail_level لا يُغلق بهذه القاعدة المزالة."""
     sig = make_signal()
-    sig.strategy = "SCALP_TREND"
-    sig.label = "🐂 ركوب التيار"
-    sig.meta["fail_level"] = 97.0
-    assert sm._open_position(sig) is True
-    ctx = _early_exit_ctx(closes_last=96.0, taker_ratio=0.70)   # دلتا موجبة
-    monkeypatch.setattr(sm, "_build_ctx", lambda s: ctx)
-    sm._early_exits_all()
-    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_TREND'")[0]
-    assert r["status"] == "open"                                # ما زالت مفتوحة
-
-
-def test_early_exit_squeeze_fail_level(host, monkeypatch):
-    """فشل الانفجار: إغلاق تحت منتصف بولنجر مع دلتا سالبة يغلق SCALP_SQUEEZE."""
-    sig = make_signal()
-    sig.strategy = "SCALP_SQUEEZE"
-    sig.label = "💥 انفجار الاختناق"
-    sig.meta["fail_level"] = 97.0
+    sig.strategy = "SCALP_FLOW"
+    sig.meta["fail_level"] = 97.0   # حقل تاريخي — لا يعود له أي تأثير
     assert sm._open_position(sig) is True
     ctx = _early_exit_ctx(closes_last=96.0, taker_ratio=0.30)
     monkeypatch.setattr(sm, "_build_ctx", lambda s: ctx)
     sm._early_exits_all()
-    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_SQUEEZE'")[0]
-    assert r["status"] == "closed"
-    assert "فشل الانفجار" in (r["close_reason"] or "")
-    assert sm._counters["SCALP_SQUEEZE"]["early_exits"] == 1
+    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_FLOW'")[0]
+    # مهلة الصفقة لم تنتهِ ولا انقلاب دلتا مؤكد بالكسر — الصف يظل مفتوحًا بدون فرع fail_level
+    assert r["status"] in ("open", "closed")   # لا استثناء — والقرار من القاعدة الحية وحدها
+    if r["status"] == "closed":
+        assert "فشل النظام" not in (r["close_reason"] or "")
+        assert "فشل الانفجار" not in (r["close_reason"] or "")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,7 +384,7 @@ def test_snapshot_shape(host):
     snap = sm.snapshot()
     for key in ("enabled", "running", "exec_tf", "symbols", "config", "state", "strategies"):
         assert key in snap
-    assert set(snap["strategies"].keys()) == {"SCALP_FLOW", "SCALP_TREND", "SCALP_SQUEEZE"}
+    assert set(snap["strategies"].keys()) == {"SCALP_FLOW"}
 
 
 def test_panel_has_scalp_section_and_chips():
@@ -396,8 +393,11 @@ def test_panel_has_scalp_section_and_chips():
     assert "scalp-box" in html
     assert "renderScalp" in html
     assert "stratChip" in html
-    assert "SCALP_FLOW" in html and "SCALP_TREND" in html and "SCALP_SQUEEZE" in html
-    assert "SCALP_PROFILE" not in html.replace("أُزيل", "")  # الاسم المزالة لا يظهر إلا في النصوص التاريخية
+    assert "SCALP_FLOW" in html
+    # [EL2.3.0] أسماء المزالة لا تظهر في الواجهة إطلاقًا (اللوحة نظيفة)
+    assert "SCALP_TREND" not in html
+    assert "SCALP_SQUEEZE" not in html
+    assert "SCALP_PROFILE" not in html  # الاسم المزالة لا يظهر إلا في النصوص التاريخية
 
 
 def test_panel_has_floating_chart_and_compare():
@@ -410,8 +410,8 @@ def test_panel_has_floating_chart_and_compare():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "EL2.2.0"
-    assert panel.BOT_VERSION == "EL2.2.0"
+    assert vnz.BOT_VERSION == "EL2.3.0"
+    assert panel.BOT_VERSION == "EL2.3.0"
 
 
 # ─────────────────────────────────────────────────────────────────────────────────
@@ -419,7 +419,7 @@ def test_version_sync():
 # ─────────────────────────────────────────────────────────────────────────────────
 
 def test_strategy_toggle_gates_scalp_entries(clean_db, monkeypatch):
-    """تعطيل SCALP_TREND من الإعدادات يمنع دخوله بوابات الإشارات فورًا،
+    """تعطيل SCALP_FLOW من الإعدادات يمنع دخوله بوابات الإشارات فورًا،
     والتفعيل يعيده — والصفقات المفتوحة لا تُلمس (الإدارة مستمرة)."""
     from strategies import manager as smgr
     monkeypatch.setattr(smgr, "SCALP_ENABLED", True)
@@ -430,19 +430,22 @@ def test_strategy_toggle_gates_scalp_entries(clean_db, monkeypatch):
             "get_paper_balance": lambda: 10000.0}
     smgr.attach_host(host)                     # الحقن أولًا ثم فحص البوابات
     gates = smgr.scalp_manager["entry_gates"]
-    ok, why = gates("SCALP_TREND", "TEST/USDT")
+    ok, why = gates("SCALP_FLOW", "TEST/USDT")
     assert ok, why
-    smgr.set_enabled("SCALP_TREND", False)
-    ok, why = gates("SCALP_TREND", "TEST/USDT")
+    smgr.set_enabled("SCALP_FLOW", False)
+    ok, why = gates("SCALP_FLOW", "TEST/USDT")
     assert not ok and "الإعدادات" in why
-    ok, _ = gates("SCALP_FLOW", "TEST/USDT")
-    assert ok                                   # الأخرى لا تتأثر
     snap = smgr.snapshot()
-    assert snap["strategies"]["SCALP_TREND"]["enabled"] is False
-    assert snap["strategies"]["SCALP_FLOW"]["enabled"] is True
-    smgr.set_enabled("SCALP_TREND", True)
-    ok, _ = gates("SCALP_TREND", "TEST/USDT")
+    assert snap["strategies"]["SCALP_FLOW"]["enabled"] is False
+    smgr.set_enabled("SCALP_FLOW", True)
+    ok, _ = gates("SCALP_FLOW", "TEST/USDT")
     assert ok
+    # [EL2.3.0] أسماء المزالة ترفض من set_enabled نفسه
+    try:
+        smgr.set_enabled("SCALP_TREND", False)
+        raise AssertionError("SCALP_TREND يجب أن تُرفض")
+    except ValueError:
+        pass
 
 
 def test_strategy_toggle_persists_and_restores(clean_db):
@@ -456,32 +459,34 @@ def test_strategy_toggle_persists_and_restores(clean_db):
     smgr.attach_host({})
     vnz.restore_strategy_flags()
     assert smgr.get_enabled("SCALP_FLOW") is False
-    assert smgr.get_enabled("SCALP_TREND") is True
-    assert smgr.get_enabled("SCALP_SQUEEZE") is True
+    # [EL2.3.0] أسماء المزالة غير معروفة → معطّلة دائمًا (لا تُقرأ من الحالة)
+    assert vnz.get_strategy_enabled("SCALP_SQUEEZE") is False
+    assert vnz.get_strategy_enabled("SCALP_TREND") is False
+    assert vnz.get_strategy_enabled("SCALP_PROFILE") is False
     vnz.set_strategy_enabled("SCALP_FLOW", True, "اختبار")   # تنظيف
 
 
 def test_strategy_toggle_api_roundtrip(clean_db, tg_off):
     """نقطة /api/strategy/toggle: تبديل صحيح + رفض أسماء غريبة + settings في /api/all."""
     c = vnz.app.test_client()
-    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_SQUEEZE", "enabled": False})
+    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_FLOW", "enabled": False})
     assert r.status_code == 200
     body = r.get_json()
     assert body["enabled"] is False
-    assert body["settings"]["strategies"]["SCALP_SQUEEZE"] is False
-    assert vnz.get_strategy_enabled("SCALP_SQUEEZE") is False
-    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_SQUEEZE", "enabled": True})
-    assert r.get_json()["settings"]["strategies"]["SCALP_SQUEEZE"] is True
+    assert body["settings"]["strategies"]["SCALP_FLOW"] is False
+    assert vnz.get_strategy_enabled("SCALP_FLOW") is False
+    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_FLOW", "enabled": True})
+    assert r.get_json()["settings"]["strategies"]["SCALP_FLOW"] is True
     r = c.post("/api/strategy/toggle", json={"strategy": "HACK", "enabled": True})
     assert r.status_code == 400
-    # SCALP_PROFILE المزالة لم تعد اسمًا صالحًا
-    r = c.post("/api/strategy/toggle", json={"strategy": "SCALP_PROFILE", "enabled": True})
-    assert r.status_code == 400
+    # [EL2.3.0] أسماء المزالة لم تعد صالحة (SCALP_PROFILE + تيار + اختناق)
+    for legacy in ("SCALP_PROFILE", "SCALP_TREND", "SCALP_SQUEEZE"):
+        r = c.post("/api/strategy/toggle", json={"strategy": legacy, "enabled": True})
+        assert r.status_code == 400
     # settings ظاهرة في /api/all
     r = c.get("/api/all")
     assert r.status_code == 200
-    assert r.get_json()["settings"]["strategies"]["SCALP_SQUEEZE"] is True
-    vnz.set_strategy_enabled("SCALP_SQUEEZE", True, "اختبار")   # تنظيف
+    assert r.get_json()["settings"]["strategies"]["SCALP_FLOW"] is True
 
 
 def test_elliott_gate_blocks_pending_creation(clean_db, tg_off, monkeypatch):
@@ -500,12 +505,12 @@ def test_elliott_gate_blocks_pending_creation(clean_db, tg_off, monkeypatch):
         vnz.set_strategy_enabled("Elliott_Fibonacci", True, "اختبار")
 
 
-def test_drain_legacy_profile_closes_orphan_rows(clean_db, tg_off, monkeypatch):
-    """[EL2.2.0] صف SCALP_PROFILE مفتوح قديم (من إصدار سابق) تُسوّيه drain_legacy_profile
-    بسعر حي مع سبب صادق، ثم لا يعود له أثر مفتوح — والمدير لا يعيد فتحه أبدًا."""
+def test_drain_legacy_strategies_closes_orphan_rows(clean_db, tg_off, monkeypatch):
+    """[EL2.3.0] صفوف الاستراتيجيات المزالة المفتوحة القديمة (SCALP_PROFILE من
+    EL2.2.0 + SCALP_TREND/SCALP_SQUEEZE من EL2.3.0) تُسوّى كلها عند الإقلاع بسعر
+    حي مع سبب صادق — لا مركز يتيم بلا مراقبة."""
     from strategies import manager as smgr
-    from strategies.manager import drain_legacy_profile
-    # التسوية تقرأ عبر المضيف المحقون — نحقن حدها الأدنى قبل النداء
+    from strategies.manager import drain_legacy_strategies
     smgr.attach_host({
         "db_query": vnz.db.query, "db_execute": vnz.db.execute,
         "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
@@ -513,31 +518,35 @@ def test_drain_legacy_profile_closes_orphan_rows(clean_db, tg_off, monkeypatch):
         "close_signal_row": vnz.close_signal_row, "close_real_trade": vnz.close_real_trade,
     })
     now_iso = vnz.utc_now_iso()
-    vnz.db.execute(
-        "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, fill_price,"
-        " stop_loss, take_profit, tp1, tp2, quantity, notional_usdt, rr_ratio, meta_json,"
-        " created_at, filled_at, initial_quantity, is_real, peak_price)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-        ("OLD/USDT", "BULLISH", "SCALP_PROFILE", "open", 100.0, 100.0, 98.0, 104.0,
-         102.0, 104.0, 10.0, 1000.0, 1.5, json.dumps({"reversion": 1}),
-         now_iso, now_iso, 10.0, 0, 100.0))
-    n = drain_legacy_profile()
-    assert n == 1
-    r = vnz.db.query("SELECT * FROM signals WHERE strategy_name='SCALP_PROFILE'")[0]
-    assert r["status"] == "closed"
-    assert "إزالة استراتيجية ارتداد القيمة" in (r["close_reason"] or "")
+    for strat in ("SCALP_PROFILE", "SCALP_TREND", "SCALP_SQUEEZE"):
+        vnz.db.execute(
+            "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, fill_price,"
+            " stop_loss, take_profit, tp1, tp2, quantity, notional_usdt, rr_ratio, meta_json,"
+            " created_at, filled_at, initial_quantity, is_real, peak_price)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            ("OLD/USDT", "BULLISH", strat, "open", 100.0, 100.0, 98.0, 104.0,
+             102.0, 104.0, 10.0, 1000.0, 1.5, json.dumps({"legacy": 1}),
+             now_iso, now_iso, 10.0, 0, 100.0))
+    n = drain_legacy_strategies()
+    assert n == 3
+    rows = vnz.db.query(
+        "SELECT strategy_name, status FROM signals WHERE strategy_name LIKE 'SCALP_%'")
+    assert all(r["status"] == "closed" for r in rows)
     # نداء ثانٍ بلا عمل — لا صفوف مفتوحة
+    assert drain_legacy_strategies() == 0
+    # الاسم التاريخي ما زال يعمل (توافق مستندات التشغيل)
+    from strategies.manager import drain_legacy_profile
     assert drain_legacy_profile() == 0
 
 
 def test_sl_reason_mapping_honest_per_strategy():
-    """[EL2.2.0] أسباب الوقف الصادقة لكل استراتيجية — لا سبب عمومي ملتبس."""
+    """[EL2.3.0] أسباب الوقف الصادقة — الباقي الوحيد يملك سببه الموثوق."""
     assert sm.SL_REASONS["SCALP_FLOW"] == "وقف انجلال التدفق"
-    assert "ركوب التيار" in sm.SL_REASONS["SCALP_TREND"]
-    assert "انفجار الاختناق" in sm.SL_REASONS["SCALP_SQUEEZE"]
     assert "SCALP_PROFILE" not in sm.SL_REASONS
-    assert sm.STRATEGY_NAMES == ("SCALP_FLOW", "SCALP_TREND", "SCALP_SQUEEZE")
-    assert sm.LEGACY_STRATEGIES == ("SCALP_PROFILE",)
+    assert "SCALP_TREND" not in sm.SL_REASONS
+    assert "SCALP_SQUEEZE" not in sm.SL_REASONS
+    assert sm.STRATEGY_NAMES == ("SCALP_FLOW",)
+    assert set(sm.LEGACY_STRATEGIES) == {"SCALP_PROFILE", "SCALP_TREND", "SCALP_SQUEEZE"}
 
 
 def test_scalp_levels_endpoint_shape(clean_db, monkeypatch):

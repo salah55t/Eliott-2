@@ -94,8 +94,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.2.0"
-        assert panel.BOT_VERSION == "EL2.2.0"
+        assert vnz.BOT_VERSION == "EL2.3.0"
+        assert panel.BOT_VERSION == "EL2.3.0"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
