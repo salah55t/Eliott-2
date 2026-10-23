@@ -53,5 +53,5 @@ def test_uptime_consistent_with_boot_at():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_pair():
-    assert vnz.BOT_VERSION == "EL2.1.0"
-    assert panel.BOT_VERSION == "EL2.1.0"
+    assert vnz.BOT_VERSION == "EL2.2.0"
+    assert panel.BOT_VERSION == "EL2.2.0"

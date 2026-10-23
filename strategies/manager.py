@@ -2,10 +2,15 @@
 """مدير الاستراتيجيات المتوازية — Eliott+2
 ==========================================
 شغّلان مستقلان (خيوط) بجانب محرك موجات إليوت دون أي مساس:
-  • scalp-scan     — بعد إغلاق كل شمعة 5m: بناء سياق الرموز + تقييم الاستراتيجيتان
-                     + البوابات المشتركة + فتح الصفقات + الخروج المبكر (شمعة مغلقة).
+  • scalp-scan     — بعد إغلاق كل شمعة 5m: بناء سياق الرموز + تقييم الاستراتيجيات
+                     الثلاث + البوابات المشتركة + فتح الصفقات + الخروج المبكر (شمعة مغلقة).
   • scalp-monitor  — كل 20ث: وقف-أولًا intrabar + جزئي 50% عند TP1 + BE + TP2
                      + تتبع القمة + مهلة الصفقة. (نفس عقائد الحماية المحمية للمحرك).
+
+[EL2.2.0] حاملة الاستراتيجيات: SCALP_FLOW (انجلال التدفق — زخم CVD) +
+SCALP_TREND (ركوب التيار — التقاط تصحيح في ترند قائم) + SCALP_SQUEEZE
+(انفجار الاختناق — تمدد تقلب بعد انضغاط بولنجر/كيلتنر). استراتيجية
+SCALP_PROFILE أُزيلت نهائيًا بقرار الحاكم — تسوية صفوفها القديمة عند الإقلاع.
 
 عقد المضيف (حقن كامل — هذه الحزمة لا تستورد vnz.py إطلاقًا):
   attach_host({
@@ -41,7 +46,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from .base import SCALP_CONFIG, ScalpConfig, ScalpContext, ScalpSignal
 from . import indicators as ind
 from .flow_ignition import FlowIgnition
-from .profile_reversion import ProfileReversion
+from .trend_pullback import TrendPullback
+from .squeeze_breakout import SqueezeBreakout
 
 
 def _flag(name: str, default: str = "1") -> bool:
@@ -49,17 +55,29 @@ def _flag(name: str, default: str = "1") -> bool:
 
 
 SCALP_ENABLED = _flag("SCALP_ENABLED")
+# [EL2.2.0] أعلام البيئة لكل استراتيجية — SCALP_S1_ENABLED اسم موروث لتوافق render.yaml
 S1_ENABLED = _flag("SCALP_S1_ENABLED")
-S2_ENABLED = _flag("SCALP_S2_ENABLED")
+S2_ENABLED = _flag("SCALP_TREND_ENABLED")
+S3_ENABLED = _flag("SCALP_SQUEEZE_ENABLED")
 
-STRATEGY_NAMES = ("SCALP_FLOW", "SCALP_PROFILE")
+STRATEGY_NAMES = ("SCALP_FLOW", "SCALP_TREND", "SCALP_SQUEEZE")
+# [EL2.2.0] استراتيجية SCALP_PROFILE أُزيلت نهائيًا بقرار الحاكم (فشلت في بلوغ
+# أهدافها عبر جيلين: v1 صفر أهداف، v2 وقفت على المهلة) — الصفوف المفتوحة القديمة
+# إن وُجدت تُسوّى عند الإقلاع (drain_legacy_profile) ولا يُقترب اسمها من أي بوابة.
+LEGACY_STRATEGIES = ("SCALP_PROFILE",)
+# أسباب الوقف الصادقة لكل استراتيجية — تحليل الأداء يتطلب تصنيفًا موثوقًا بالمصدر
+SL_REASONS = {
+    "SCALP_FLOW": "وقف انجلال التدفق",
+    "SCALP_TREND": "وقف ركوب التيار (هيكلي تحت قاع التصحيح)",
+    "SCALP_SQUEEZE": "وقف انفجار الاختناق (تحت قاعدة الاختناق)",
+}
 
 HOST: Dict[str, Any] = {}
 _lock = threading.RLock()
 _started = False
 # [EL2.1.0] أعلام التفعيل لكل استراتيجية — من البيئة عند الإقلاع ومن اللوحة حيًا
 # (زر الإعدادات). التعطيل يمنع توليد إشارات جديدة فقط — الصفقات المفتوحة تُدار حتى الإغلاق.
-_enabled: Dict[str, bool] = {"SCALP_FLOW": True, "SCALP_PROFILE": True}
+_enabled: Dict[str, bool] = {"SCALP_FLOW": True, "SCALP_TREND": True, "SCALP_SQUEEZE": True}
 _state: Dict[str, Any] = {"boot_at": None, "last_scan_at": None, "last_scan_ts": 0.0,
                           "cycles": 0, "last_error": "", "cvd_source_last": ""}
 _counters: Dict[str, Dict[str, Any]] = {
@@ -88,17 +106,19 @@ def get_enabled(strategy: str) -> bool:
 
 def attach_host(host: Dict[str, Any]) -> None:
     """حقن اعتماديات المضيف (vnz يبنيها عند الإقلاع — الاختبارات تبني بدائل).
-    [EL2.1.0] المثيلتان تُبنَيان دائمًا (جاهزتان للتفعيل الحي من اللوحة)،
-    أعلام البيئة S1/S2_ENABLED تحدد الحالة الابتدائية فقط."""
+    [EL2.2.0] المثيلات الثلاث تُبنَى دائمًا (جاهزة للتفعيل الحي من اللوحة)،
+    أعلام البيئة SCALP_S1/TREND/SQUEEZE_ENABLED تحدد الحالة الابتدائية فقط."""
     global HOST
     HOST = dict(host or {})
     cfg = SCALP_CONFIG
     _instances.clear()
     _instances["SCALP_FLOW"] = FlowIgnition(cfg)
-    _instances["SCALP_PROFILE"] = ProfileReversion(cfg)
+    _instances["SCALP_TREND"] = TrendPullback(cfg)
+    _instances["SCALP_SQUEEZE"] = SqueezeBreakout(cfg)
     with _lock:
         _enabled["SCALP_FLOW"] = S1_ENABLED
-        _enabled["SCALP_PROFILE"] = S2_ENABLED
+        _enabled["SCALP_TREND"] = S2_ENABLED
+        _enabled["SCALP_SQUEEZE"] = S3_ENABLED
     _state["boot_at"] = time.time()
 
 
@@ -174,7 +194,7 @@ def _scalp_open_count(strategy: Optional[str] = None) -> int:
                                 " AND strategy_name=%s", (strategy,)) or []
     else:
         rows = _hf("db_query", "SELECT COUNT(*) AS n FROM signals WHERE status='open'"
-                                " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE')") or []
+                                " AND strategy_name IN ('SCALP_FLOW','SCALP_TREND','SCALP_SQUEEZE')") or []
     return int(rows[0]["n"]) if rows else 0
 
 
@@ -436,9 +456,12 @@ def _scan_cycle() -> Dict[str, int]:
 
 
 def _early_exits_all() -> None:
-    """خروج مبكر على شموع مغلقة (تفشل البنية/الدلتا) — بيانات الدورة نفسها."""
+    """خروج مبكر على شموع مغلقة (تفشل البنية/الدلتا) — بيانات الدورة نفسها.
+    [EL2.2.0] SCALP_TREND وSCALP_SQUEEZE تخزنان fail_level في meta —
+    الخروج على شرط مشترك واحد: إغلاق تحت مستوى الفشل مع دلتا سالبة
+    (نظام مات/انفجار فشل) — والخروج على انقلاب SuperTrend للـFLOW كما هو."""
     rows = _hf("db_query", "SELECT * FROM signals WHERE status='open'"
-                            " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE') ORDER BY id ASC") or []
+                            " AND strategy_name IN ('SCALP_FLOW','SCALP_TREND','SCALP_SQUEEZE') ORDER BY id ASC") or []
     if not rows:
         return
     by_sym: Dict[str, List[Dict[str, Any]]] = {}
@@ -453,28 +476,29 @@ def _early_exits_all() -> None:
         if ctx is None or not ctx.k5:
             continue
         closes = [float(r["close"]) for r in ctx.k5]
+        cv = ind.cvd_series(ctx.k5)
         for sig in srows:
             try:
                 name = sig["strategy_name"]
                 meta = _sig_meta(sig)
                 if name == "SCALP_FLOW":
-                    cv = ind.cvd_series(ctx.k5)
                     st = ind.supertrend([float(r["high"]) for r in ctx.k5],
                                         [float(r["low"]) for r in ctx.k5], closes, 10, 2.5)
                     if cv and st and cv["cvd"][-1] < cv["ema"][-1] and closes[-1] < st["line"]:
                         _close_position(sig, closes[-1], "انقلاب الدلتا (CVD) ضد الاتجاه مع كسر SuperTrend", "early")
                         _bump(name, "early_exits")
                         continue
-                if name == "SCALP_PROFILE":
+                elif name in ("SCALP_TREND", "SCALP_SQUEEZE"):
                     fail_lv = float(meta.get("fail_level") or 0)
-                    if fail_lv > 0 and closes[-1] < fail_lv:
-                        # [EL2.1.0] مستوى الفشل الآن القاع المسحوب ذاته — إغلاق مغلق
-                        # تحته يعني أن الاستعادة فشلت والفرضية ماتت (خروج بسعر أفضل من الوقف غالبًا)
-                        _close_position(sig, closes[-1], "فشل استعادة القيمة (إغلاق مغلق تحت القاع المسحوب)", "early")
+                    delta_neg = bool(cv and cv["delta_last"] < 0)
+                    if fail_lv > 0 and closes[-1] < fail_lv and delta_neg:
+                        why = ("فشل النظام: إغلاق تحت EMA50 مع دلتا سالبة"
+                               if name == "SCALP_TREND"
+                               else "فشل الانفجار: إغلاق تحت منتصف بولنجر مع دلتا سالبة")
+                        _close_position(sig, closes[-1], why, "early")
                         _bump(name, "early_exits")
                         continue
                 # مهلة الصفقة — شبكة أمان مزدوجة مع المراقبة
-                # [EL2.1.0] الارتداد له مهلة خاصة أقصر (45د) — إما يعمل سريعًا أو ماتت فرضيته
                 hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min
                 created = str(sig.get("created_at") or "")
                 if created:
@@ -499,6 +523,34 @@ def _sig_meta(sig: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(raw) if raw else {}
     except (TypeError, ValueError):
         return {}
+
+
+def drain_legacy_profile() -> int:
+    """[EL2.2.0] تسوية صفوف SCALP_PROFILE المفتوحة القديمة (إن وُجدت) — الاستراتيجية
+    أُزيلت من النظام فلا يُترك مركزها يتيمًا بلا مراقبة: يُغلق كل صف مفتوح بسعر
+    حي أو سعر الملء مع سبب صادق. تُستدعى مرة واحدة عند الإقلاع قبل بدء الخيوط.
+    يعيد عدد الصفوف المسوّاة (صفر في الحالة الطبيعية)."""
+    rows = _hf("db_query", "SELECT * FROM signals WHERE status='open'"
+                            " AND strategy_name IN ('SCALP_PROFILE') ORDER BY id ASC") or []
+    n = 0
+    for sig in rows:
+        try:
+            live = _hf("get_live_price", sig["symbol"])
+            price = float(live or sig.get("fill_price") or sig.get("entry_price") or 0)
+            if price <= 0:
+                continue
+            _close_position(sig, price,
+                            "إزالة استراتيجية ارتداد القيمة من النظام — تسوية مركز قديم",
+                            "other")
+            n += 1
+        except Exception:
+            lg = HOST.get("logger")
+            if lg:
+                lg.exception("[سكالب] تسوية صف قديم %s فشلت", sig.get("symbol"))
+    if n:
+        _log("info", f"◈ تمت تسوية {n} صفقة قديمة من استراتيجية ارتداد القيمة المزالة — "
+                     f"النظام الآن: تدفق + تيار + اختناق", "SCALP_CLOSE")
+    return n
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -544,7 +596,7 @@ def _monitor_cycle() -> Dict[str, int]:
     cfg = SCALP_CONFIG
     stats = {"open": 0, "sl": 0, "partial": 0, "tp2": 0}
     rows = _hf("db_query", "SELECT * FROM signals WHERE status='open'"
-                            " AND strategy_name IN ('SCALP_FLOW','SCALP_PROFILE') ORDER BY id ASC") or []
+                            " AND strategy_name IN ('SCALP_FLOW','SCALP_TREND','SCALP_SQUEEZE') ORDER BY id ASC") or []
     for sig in rows:
         sym = sig["symbol"]
         try:
@@ -567,10 +619,9 @@ def _monitor_cycle() -> Dict[str, int]:
             # 1) الوقف أولًا — دائمًا قبل أي ربح (عقيدة محمية لا تكسر)
             sl_now = float(sig.get("stop_loss") or 0)
             if sl_now > 0 and low_now <= sl_now:
-                # [EL2.1.0] سبب الوقف موثوق بالمصدر — تحليل الأداء لكل استراتيجية يتطلب صدق التصنيف
-                sl_reason = ("وقف ارتداد القيمة (هيكلي تحت القاع المسحوب)"
-                             if sig.get("strategy_name") == "SCALP_PROFILE"
-                             else "وقف انجلال التدفق")
+                # [EL2.2.0] سبب الوقف الصادق لكل استراتيجية — تحليل الأداء يتطلب صدق التصنيف
+                sl_reason = SL_REASONS.get(sig.get("strategy_name"),
+                                           f"وقف سكالب ({sig.get('strategy_name')})")
                 _close_position(sig, sl_now, sl_reason, "sl")
                 stats["sl"] += 1
                 continue
@@ -600,7 +651,7 @@ def _monitor_cycle() -> Dict[str, int]:
                 _close_position(sig, tp2, "هدف سكالب الثاني (نهاية الموجة القصيرة)", "tp")
                 stats["tp2"] += 1
                 continue
-            # 4) مهلة الصفقة — [EL2.1.0] مهلة الارتداد 45د من meta إن وجدت
+            # 4) مهلة الصفقة — [EL2.2.0] مهلة خاصة عبر meta (max_hold_override) عند وجودها
             hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min
             created = str(sig.get("created_at") or "")
             if created:
@@ -754,6 +805,7 @@ scalp_manager = {
     "daily_loss_block": _daily_loss_block,
     "resolve_symbols": resolve_symbols,
     "sig_meta": _sig_meta,
+    "drain_legacy_profile": drain_legacy_profile,   # [EL2.2.0] تسوية صفوف المزالة
     "config": SCALP_CONFIG,
     "instances": _instances,
     "counters": _counters,

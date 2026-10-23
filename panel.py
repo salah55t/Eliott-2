@@ -35,7 +35,7 @@ Charts v5.2.1 (Apache-2.0 — يُقدَّم محليًا من /lwc.js بلا CD
 والذاكرة.
 """
 
-BOT_VERSION = "EL2.1.0"
+BOT_VERSION = "EL2.2.0"
 
 PANEL_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -252,12 +252,15 @@ PANEL_HTML = r"""<!DOCTYPE html>
   /* [EL2.0.0] حبوب الاستراتيجيات المتوازية — شارات الصفوف وبطاقات القسم */
   .p-ew   { background:rgba(230,247,255,.07); color:#e6f7ff; border-color:rgba(230,247,255,.25); }
   .p-s1   { background:rgba(0,229,255,.12); color:var(--cyan); border-color:rgba(0,229,255,.45); font-weight:700; }
-  .p-s2   { background:rgba(247,201,72,.12); color:var(--gld); border-color:rgba(247,201,72,.45); font-weight:700; }
+  .p-t    { background:rgba(100,216,203,.12); color:#64d8cb; border-color:rgba(100,216,203,.5); font-weight:700; }
+  .p-z    { background:rgba(255,176,32,.14); color:#ffb020; border-color:rgba(255,176,32,.55); font-weight:700; }
   .scalp-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
   .scalp-card { position:relative; overflow:hidden; border:1px solid rgba(0,229,255,.22); border-radius:14px; padding:14px 16px; background:linear-gradient(160deg,rgba(0,229,255,.07),rgba(10,15,22,.35)); }
-  .scalp-card.s2 { border-color:rgba(247,201,72,.25); background:linear-gradient(160deg,rgba(247,201,72,.07),rgba(10,15,22,.35)); }
+  .scalp-card.t { border-color:rgba(100,216,203,.25); background:linear-gradient(160deg,rgba(100,216,203,.07),rgba(10,15,22,.35)); }
+  .scalp-card.z { border-color:rgba(255,176,32,.28); background:linear-gradient(160deg,rgba(255,176,32,.07),rgba(10,15,22,.35)); }
   .scalp-card h3 { margin:0 0 6px; font-size:15px; color:var(--cyan); display:flex; align-items:center; gap:8px; }
-  .scalp-card.s2 h3 { color:var(--gld); }
+  .scalp-card.t h3 { color:#64d8cb; }
+  .scalp-card.z h3 { color:#ffb020; }
   .scalp-card .srow { display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,.06); }
   .scalp-card .srow:last-child { border-bottom:none; }
   .scalp-card .srow b { font-variant-numeric:tabular-nums; }
@@ -378,6 +381,35 @@ PANEL_HTML = r"""<!DOCTYPE html>
   .donut .donut-c b { font-size:1.25rem; color:var(--neon); font-family:'Share Tech Mono',monospace; }
   .donut .donut-c span { font-size:10px; color:var(--mut); }
   .scalp-card.dim { opacity:.55; }
+  /* [EL2.2.0] شريط معدل الربح في جدول مقارنة الاستراتيجيات */
+  .wr-bar { height:4px; border-radius:3px; background:rgba(255,255,255,.07); overflow:hidden; margin-top:4px; max-width:120px; }
+  .wr-bar i { display:block; height:100%; border-radius:3px; transition:width .6s ease; }
+  /* [EL2.2.0] نافذة الشارت العائمة — سحب/تحجيم/تصغير/استعادة */
+  #chart-float { display:none; position:fixed; top:72px; right:26px; z-index:998; width:min(780px,94vw); height:min(520px,72vh);
+    min-width:320px; min-height:250px; flex-direction:column;
+    background:linear-gradient(165deg,rgba(2,16,14,.97),rgba(0,8,13,.98));
+    border:1px solid rgba(0,229,255,.28); border-radius:16px; overflow:hidden;
+    box-shadow:0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(0,229,255,.06), 0 0 34px rgba(0,229,255,.10);
+    animation:modalIn .22s ease; }
+  #chart-float.min { height:auto !important; }
+  #chart-float.min .cf-body, #chart-float.min .cf-handle { display:none; }
+  .cf-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 12px;
+    cursor:grab; user-select:none; -webkit-user-select:none; touch-action:none;
+    background:linear-gradient(90deg,rgba(0,229,255,.10),rgba(0,255,156,.06));
+    border-bottom:1px solid rgba(0,229,255,.18); }
+  .cf-bar:active { cursor:grabbing; }
+  .cf-bar .cf-title { color:#e6f7ff; font-size:13px; display:flex; align-items:center; gap:8px;
+    white-space:nowrap; overflow:hidden; }
+  .cf-btns { display:flex; gap:6px; flex:0 0 auto; }
+  .cf-btn { background:rgba(0,229,255,.08); color:#9fe8ff; border:1px solid rgba(0,229,255,.30); border-radius:8px;
+    width:28px; height:25px; cursor:pointer; font-size:12px; line-height:1; transition:.15s; }
+  .cf-btn:hover { background:rgba(0,229,255,.20); transform:translateY(-1px); }
+  .cf-btn.cf-close:hover { background:rgba(255,51,85,.25); border-color:rgba(255,51,85,.5); color:#ffb3c2; }
+  .cf-body { flex:1 1 auto; min-height:0; }
+  .cf-handle { position:absolute; bottom:0; left:0; width:24px; height:24px; cursor:nwse-resize; touch-action:none;
+    background:linear-gradient(135deg, transparent 46%, rgba(0,229,255,.55) 50%, transparent 54%,
+      rgba(0,229,255,.35) 66%, transparent 70%, rgba(0,229,255,.3) 82%, transparent 86%); }
+  @media (max-width:640px){ #chart-float { right:8px; top:64px; } }
 </style>
 </head>
 <body>
@@ -400,7 +432,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
       <label class="switch"><input type="checkbox" id="real-toggle" onchange="toggleReal(this)"><div class="slider"></div></label>
     </div>
     <button class="act" onclick="toggleTrading()">تشغيل/إيقاف التوليد</button>
-    <button class="act" id="settings-btn" title="تفعيل/تعطيل الاستراتيجيات الثلاث — الحالة محفوظة وتصمد عبر إعادة النشر" onclick="openSettings()">⚙ الإعدادات</button>
+    <button class="act" id="settings-btn" title="تفعيل/تعطيل الاستراتيجيات الأربع — الحالة محفوظة وتصمد عبر إعادة النشر" onclick="openSettings()">⚙ الإعدادات</button>
     <div class="tf-ctl" title="فريم الكشف والتنفيذ — التبديل يلغي الأوامر الورقية المعلقة ويبدأ فحصًا جديدًا على الفريم المختار (الاختيار محفوظ ويصمد عبر إعادة النشر)">
       <span class="rlbl">الفريم:</span>
       <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
@@ -423,7 +455,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>⚡◈ الاستراتيجيات المتوازية — Eliott+2 <span class="mut small">— استراتيجيتا سكالبينغ سبوت على باينانس تعملان جنبًا إلى جنب مع موجات إليوت على نفس الرصيد: «انجلال التدفق» (زخم CVD + SuperTrend + جدران السيولة كأهداف) و«ارتداد القيمة» (Volume Profile POC/VAH/VAL + امتصاص CVD + تقارب فيبو) — الحماية نفسها: جزئي 50% عند الهدف الأول + BE + وقف أولًا</span></h2>
+    <h2>⚡🐂💥 الاستراتيجيات المتوازية — Eliott+2 <span class="mut small">— ثلاث استراتيجيات سكالبينغ سبوت على باينانس تعمل جنبًا إلى جنب مع موجات إليوت على نفس الرصيد: «انجلال التدفق» (زخم CVD + SuperTrend + جدران السيولة كأهداف) · «ركوب التيار» (تصحيح في ترند قائم + استئناف دلتا — EL2.2.0) · «انفجار الاختناق» (بولنجر داخل كيلتنر + انفجار حجم ودلتا — EL2.2.0) — الحماية نفسها: جزئي 50% عند الهدف الأول + BE + وقف أولًا. ارتداد القيمة أُزيل نهائيًا بعد فشله في بلوغ الأهداف</span></h2>
     <div id="scalp-box" class="scalp-cards"></div>
   </section>
 
@@ -436,6 +468,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
     <h2>🕯 الشارت الحي — البنية والأهداف <span class="mut small">— شموع فريم التنفيذ من كاش Postgres الدائم (صفر طلبات للمزودين) + الشمعة الجارية حية من التيار · خطوط: منطقة الدخول · الوقف · الأهداف المتدرجة TP1→TP3 · سقف الأسبوع — اضغط رمز أي صفقة أعلاه لعرضها هنا</span></h2>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
       <select id="chart-sym" onchange="chartSelectSym()" style="background:#0a0f16;color:#e6f7ff;border:1px solid rgba(0,229,255,.3);border-radius:8px;padding:6px 10px;font-family:inherit"></select>
+      <button class="tf-btn" id="chart-float-btn" onclick="chartFloatToggle()" title="إطلاق الشارت في نافذة عائمة قابلة للسحب والتحجيم — أو إعادته إلى الصفحة">⤢ عائم</button>
       <span id="chart-legend" class="mut small">
         <span style="color:#00e5ff">━ دخول</span> · <span style="color:#ff2d78">━ وقف</span> · <span style="color:#22e58c">━ أهداف</span> · <span style="color:#ffb020">⌈ سقف أسبوع</span>
       </span>
@@ -458,7 +491,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
         <span style="color:#ffd24a">━ POC</span> · <span style="color:#b026ff">┈ VAH/VAL</span> · <span style="color:#00e5ff">┈ VWAP</span>
       </span>
     </div>
-    <div id="lwc-chart" class="chart-frame" style="border:1px solid rgba(0,229,255,.12);border-radius:14px;background:rgba(0,229,255,.02)"></div>
+    <div id="chart-dock"><div id="lwc-chart" class="chart-frame" style="border:1px solid rgba(0,229,255,.12);border-radius:14px;background:rgba(0,229,255,.02)"></div></div>
     <div id="chart-note" class="mut small" style="margin-top:6px">—</div>
     <div id="ew-note" class="mut small" style="margin-top:2px"></div>
     <div id="ewx-note" class="mut small" style="margin-top:2px;color:#f7c948"></div>
@@ -514,6 +547,18 @@ PANEL_HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 <div id="toast"></div>
+<!-- [EL2.2.0] نافذة الشارت العائمة — قابلة للسحب (الشريط) والتحجيم (الزاوية) والتصغير -->
+<div id="chart-float">
+  <div class="cf-bar" id="cf-drag">
+    <span class="cf-title">🕯 الشارت العائم · <b id="cf-sym">—</b><span class="mut small" id="cf-mini"></span></span>
+    <span class="cf-btns">
+      <button class="cf-btn" id="cf-min" onclick="chartFloatMin()" title="تصغير / استعادة">—</button>
+      <button class="cf-btn cf-close" onclick="chartFloatOff()" title="إعادة الشارت إلى داخل الصفحة">✕</button>
+    </span>
+  </div>
+  <div class="cf-body" id="cf-body"></div>
+  <div class="cf-handle" id="cf-resize" title="اسحب لتغيير الحجم"></div>
+</div>
 
 <script src="/lwc.js" onerror="window.__LWC_FAILED=true"></script>
 <script src="/ew.js" onerror="window.__EW_FAILED=true"></script>
@@ -713,8 +758,9 @@ function renderScanner(d){
 // [EL2.0.0] شارة الاستراتيجية على كل صف — موجات/تدفق/قيمة
 function stratChip(s){
   const n = s.strategy_name || 'Elliott_Fibonacci';
-  if(n==='SCALP_FLOW')   return '<span class="pill p-s1" title="سكالب انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة">⚡ تدفق</span> ';
-  if(n==='SCALP_PROFILE')return '<span class="pill p-s2" title="سكالب ارتداد القيمة: Volume Profile + امتصاص CVD">◈ قيمة</span> ';
+  if(n==='SCALP_FLOW')    return '<span class="pill p-s1" title="سكالب انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة">⚡ تدفق</span> ';
+  if(n==='SCALP_TREND')   return '<span class="pill p-t" title="سكالب ركوب التيار: تصحيح في ترند قائم + استئناف دلتا — EL2.2.0">🐂 تيار</span> ';
+  if(n==='SCALP_SQUEEZE') return '<span class="pill p-z" title="سكالب انفجار الاختناق: بولنجر داخل كيلتنر + انفجار بجسمه وحجمه — EL2.2.0">💥 اختناق</span> ';
   return '';
 }
 
@@ -722,8 +768,9 @@ function stratChip(s){
 // [EL2.1.0] كل بطاقة تعكس: حالة المفتاح (زر ⚡⚙) + أعمدة إغلاقات مكدسة + أداء حقيقي
 // محسوب من الصفقات المغلقة (آخر 25) لكل استراتيجية — صدق الأرقام لا الديكور.
 const STRAT_META = {
-  'SCALP_FLOW':   {icon:'⚡', color:'#00ff9c', env:'SCALP_S1_ENABLED'},
-  'SCALP_PROFILE':{icon:'◈', color:'#b026ff', env:'SCALP_S2_ENABLED'},
+  'SCALP_FLOW':    {icon:'⚡', color:'#00ff9c', env:'SCALP_S1_ENABLED'},
+  'SCALP_TREND':   {icon:'🐂', color:'#64d8cb', env:'SCALP_TREND_ENABLED'},
+  'SCALP_SQUEEZE': {icon:'💥', color:'#ffb020', env:'SCALP_SQUEEZE_ENABLED'},
 };
 function stratClosedStats(closed, key){
   const a = {n:0, w:0, pnl:0};
@@ -758,7 +805,8 @@ function renderScalp(d){
   const closed = (d && d.closed_signals) || [];
   const defs = [
     ['SCALP_FLOW','⚡ انجلال التدفق (S1)','s1','زخم CVD + SuperTrend + جدران السيولة كأهداف'],
-    ['SCALP_PROFILE','◈ ارتداد القيمة 2.0 (S2)','s2','مسح سيولة واستعادة + أهداف POC/VWAP قابلة للبلوغ'],
+    ['SCALP_TREND','🐂 ركوب التيار (S2)','t','تصحيح إلى EMA20/VWAP في ترند قائم + شمعة استئناف دلتاها موجبة — وقف تحت قاع التصحيح (EL2.2.0)'],
+    ['SCALP_SQUEEZE','💥 انفجار الاختناق (S3)','z','بولنجر داخل كيلتنر + انفجار بجسم اندفاعي وحجم 1.4× ودلتا موجبة — وقف تحت قاعدة الاختناق (EL2.2.0)'],
   ];
   el.innerHTML = defs.map(([key,title,cls,desc])=>{
     const s = (scalp.strategies||{})[key];
@@ -774,7 +822,7 @@ function renderScalp(d){
     const cs = stratClosedStats(closed, key);
     const csWr = cs.n ? (100*cs.w/cs.n).toFixed(0)+'%' : '—';
     const statePill = on
-      ? `<span class="pill ${cls==='s1'?'p-s1':'p-s2'}">مفعّلة</span>`
+      ? `<span class="pill ${{s1:'p-s1',t:'p-t',z:'p-z'}[cls]||'p-s1'}">مفعّلة</span>`
       : `<span class="pill p-cxl" title="من زر ⚙ الإعدادات — لا إشارات جديدة والصفقات المفتوحة تُدار">معطّلة (⚙)</span>`;
     return `<div class="scalp-card ${cls} ${on?'':'dim'}">
       <h3>${title} ${statePill}</h3>
@@ -998,10 +1046,13 @@ function renderPerfStrats(closed){
     a.n++;
     const p = parseFloat(s.pnl_usdt||0); if(!isNaN(p)){ a.pnl += p; if(p>0) a.w++; }
   });
-  const names = [['Elliott_Fibonacci','🌊 موجات إليوت','#00e5ff'],['SCALP_FLOW','⚡ انجلال التدفق','#00ff9c'],['SCALP_PROFILE','◈ ارتداد القيمة','#c792ea']];
+  const names = [['Elliott_Fibonacci','🌊 موجات إليوت','#00e5ff'],['SCALP_FLOW','⚡ انجلال التدفق','#00ff9c'],
+    ['SCALP_TREND','🐂 ركوب التيار','#64d8cb'],['SCALP_SQUEEZE','💥 انفجار الاختناق','#ffb020']];
   const rows = names.filter(x=>agg[x[0]]).map(([k,lbl,col])=>{
-    const a = agg[k], wr = a.n ? (100*a.w/a.n).toFixed(0)+'%' : '—';
-    return `<tr><td style="color:${col}"><b>${lbl}</b></td><td>${a.n}</td><td>${wr}</td>
+    const a = agg[k], wr = a.n ? (100*a.w/a.n) : null;
+    const wrTxt = (wr==null)?'—':wr.toFixed(0)+'%';
+    const bar = (wr==null)?'':`<div class="wr-bar"><i style="width:${wr.toFixed(0)}%;background:${col}"></i></div>`;
+    return `<tr><td style="color:${col}"><b>${lbl}</b></td><td>${a.n}</td><td>${wrTxt}${bar}</td>
       <td class="${a.pnl>=0?'pos':'neg'}"><b>${a.pnl>=0?'+':''}${a.pnl.toFixed(2)}$</b></td></tr>`;
   }).join('');
   el.innerHTML = rows ? `<div class="tbl-wrap"><table style="max-width:560px"><thead><tr>
@@ -1115,7 +1166,6 @@ function chartInit(){
     try{ if(LW.createSeriesMarkers) EW_MARKS = LW.createSeriesMarkers(CSERIES, []); }catch(e){ EW_MARKS = null; }
     // [FE1.9.12] مثيل علامات مستقل لمحاور المحرك P0–P5
     try{ if(LW.createSeriesMarkers) EWX_MARKS = LW.createSeriesMarkers(CSERIES, []); }catch(e){ EWX_MARKS = null; }
-    window.addEventListener('resize', () => { if(CHART){ try{ CHART.applyOptions({ width: $('lwc-chart').clientWidth || 640 }); }catch(e){} } });
   }catch(e){ CHART = null; $('lwc-chart').innerHTML = '<div class="empty" style="padding:20px">فشل تهيئة الشارت: ' + esc(String(e.message||e)) + '</div>'; }
 }
 function chartPopulate(s){
@@ -1140,7 +1190,7 @@ function chartFocus(sym){
   const sel = $('chart-sym');
   if(sel){ [...sel.options].forEach(o=>{ if(o.value===sym) o.selected = true; }); }
   chartTick(true);
-  const el = $('lwc-chart'); if(el && el.scrollIntoView) try{ el.scrollIntoView({behavior:'smooth', block:'nearest'}); }catch(e){}
+  if(!CF_ON){ const el = $('lwc-chart'); if(el && el.scrollIntoView) try{ el.scrollIntoView({behavior:'smooth', block:'nearest'}); }catch(e){} }
 }
 function chartApplyOverlays(){
   if(!CSERIES) return;
@@ -1217,6 +1267,8 @@ async function chartTick(force){
     const srcTxt = d.source==='cache+live' ? 'كاش + شمعة حية' : (d.source==='cache' ? 'كاش Postgres' : d.source);
     $('chart-note').innerHTML = '<b>' + esc(chartSym) + '</b> · فريم ' + esc(tf) + ' · ' + d.count + ' شمعة · مصدر ' + esc(srcTxt)
       + (row ? ' · خطوط: دخول/وقف/' + ((row.tp_stages&&row.tp_stages.length)?(row.tp_stages.length+' أهداف'):'هدف') + (row.weekly_high?' + سقف أسبوع':'') : ' · لا صفقة على هذا الرمز (شموع فقط)');
+    const cfSym = $('cf-sym'); if(cfSym) cfSym.textContent = chartSym;
+    const cfMini = $('cf-mini'); if(cfMini) cfMini.textContent = ' · ' + tf + ' · ' + d.count + ' شمعة';
   }catch(e){ $('chart-note').textContent = 'خطأ جلب الشموع: ' + String(e.message||e).slice(0,120); }
 }
 
@@ -1472,6 +1524,93 @@ async function lvlMaybe(){
   finally{ LVL_BUSY = false; }
 }
 
+// ═══ [EL2.2.0] نافذة الشارت العائمة — سحب بالشريط · تحجيم من الزاوية · تصغير · استعادة ═══
+// الشارت نفسه (عنصر #lwc-chart) يتنقل بين المرساة المدمجة #chart-dock وجسم النافذة #cf-body —
+// لا نسخ ولا إعادة تهيئة: نفس المثيل CHART يعمل في الموضعين وResizeObserver يعيد ملاءمته.
+let CF_ON = false, CF_MIN = false;
+const CF_SAVE = 'el2_chart_float_v1';
+function chartFloatEls(){ return {win:$('chart-float'), body:$('cf-body'), dock:$('chart-dock')}; }
+function chartFloatToggle(){ CF_ON ? chartFloatOff() : chartFloatOn(); }
+function chartFloatOn(save){
+  const e = chartFloatEls();
+  if(!e.win || !e.body || !e.dock || CF_ON) return;
+  CF_ON = true; CF_MIN = false;
+  e.body.appendChild($('lwc-chart'));
+  e.win.style.display = 'flex';
+  e.win.classList.remove('min');
+  const btn = $('chart-float-btn');
+  if(btn){ btn.classList.add('on'); btn.textContent = '⤡ مدمج'; }
+  requestAnimationFrame(()=>{ if(CHART){ try{ CHART.applyOptions({width: e.body.clientWidth, height: e.body.clientHeight}); CHART.timeScale().scrollToRealTime(); }catch(err){} } });
+  if(save !== false){ try{ localStorage.setItem(CF_SAVE,'1'); }catch(err){} toast('الشارت في نافذة عائمة — اسحب شريطها للتحريك وزاويتها للتحجيم'); }
+}
+function chartFloatOff(save){
+  const e = chartFloatEls();
+  if(!e.win || !e.body || !e.dock || !CF_ON) return;
+  CF_ON = false; CF_MIN = false;
+  e.win.style.display = 'none';
+  e.win.classList.remove('min');
+  e.dock.appendChild($('lwc-chart'));
+  const btn = $('chart-float-btn');
+  if(btn){ btn.classList.remove('on'); btn.textContent = '⤢ عائم'; }
+  requestAnimationFrame(()=>{ if(CHART){ try{ CHART.applyOptions({width: e.dock.clientWidth, height: 340}); }catch(err){} } });
+  if(save !== false){ try{ localStorage.removeItem(CF_SAVE); }catch(err){} }
+}
+function chartFloatMin(){
+  if(!CF_ON) return;
+  CF_MIN = !CF_MIN;
+  $('chart-float').classList.toggle('min', CF_MIN);
+  if(!CF_MIN && CHART){ try{ CHART.applyOptions({width: $('cf-body').clientWidth, height: $('cf-body').clientHeight}); }catch(err){} }
+}
+(function chartFloatBind(){
+  const win = $('chart-float'), bar = $('cf-drag'), hnd = $('cf-resize');
+  if(!win || !bar || !hnd) return;
+  // السحب — Pointer Events تغطي الفأرة واللمس مع setPointerCapture
+  let sx=0, sy=0, ox=0, oy=0, dragging=false;
+  bar.addEventListener('pointerdown', ev => {
+    if(ev.target.closest('.cf-btn')) return;
+    dragging = true;
+    try{ bar.setPointerCapture(ev.pointerId); }catch(err){}
+    sx = ev.clientX; sy = ev.clientY;
+    const r = win.getBoundingClientRect(); ox = r.left; oy = r.top;
+    ev.preventDefault();
+  });
+  bar.addEventListener('pointermove', ev => {
+    if(!dragging) return;
+    const nx = Math.max(4, Math.min(window.innerWidth - win.offsetWidth - 4, ox + ev.clientX - sx));
+    const ny = Math.max(4, Math.min(window.innerHeight - 44, oy + ev.clientY - sy));
+    win.style.left = nx + 'px'; win.style.top = ny + 'px';
+    win.style.right = 'auto'; win.style.bottom = 'auto';
+  });
+  bar.addEventListener('pointerup', () => { dragging = false; });
+  bar.addEventListener('pointercancel', () => { dragging = false; });
+  // التحجيم من الزاوية
+  let rsx=0, rsy=0, rsw=0, rsh=0, sizing=false;
+  hnd.addEventListener('pointerdown', ev => {
+    sizing = true;
+    try{ hnd.setPointerCapture(ev.pointerId); }catch(err){}
+    rsx = ev.clientX; rsy = ev.clientY;
+    const r = win.getBoundingClientRect(); rsw = r.width; rsh = r.height;
+    ev.preventDefault();
+  });
+  hnd.addEventListener('pointermove', ev => {
+    if(!sizing) return;
+    win.style.width  = Math.max(320, Math.min(window.innerWidth - 16, rsw + ev.clientX - rsx)) + 'px';
+    win.style.height = Math.max(250, Math.min(window.innerHeight - 16, rsh + ev.clientY - rsy)) + 'px';
+    if(CHART){ try{ CHART.applyOptions({width: $('cf-body').clientWidth, height: $('cf-body').clientHeight}); }catch(err){} }
+  });
+  hnd.addEventListener('pointerup', () => { sizing = false; });
+  hnd.addEventListener('pointercancel', () => { sizing = false; });
+  // ملاءمة الشارت لأي تغيّر حجم في حاويته (دمج/عائم/نافذة المتصفح) — بديل مستمع resize القديم
+  if(window.ResizeObserver){
+    new ResizeObserver(() => {
+      if(!CHART) return;
+      const b = $('lwc-chart');
+      if(!b || !b.clientWidth) return;
+      try{ CHART.applyOptions({width: b.clientWidth, height: b.clientHeight || 340}); }catch(err){}
+    }).observe($('lwc-chart'));
+  }
+})();
+
 async function refresh(){
   if (REFRESHING || document.hidden) return;  // [FE1.5.0] بلا تداخل طلبات ولا ضغط والإخفاء
   REFRESHING = true;
@@ -1512,7 +1651,8 @@ async function toggleTrading(){
 const STRAT_DEFS = [
   {k:'Elliott_Fibonacci', icon:'🌊', label:'موجات إليوت + فيبوناتشي', desc:'المحرك الأصلي — كشف 15م وأوامر معلقة عند 0.382'},
   {k:'SCALP_FLOW', icon:'⚡', label:'انجلال التدفق (سكالب زخم)', desc:'اندلاع CVD + SuperTrend + جدران سيولة على 5م'},
-  {k:'SCALP_PROFILE', icon:'◈', label:'ارتداد القيمة 2.0 (سكالب)', desc:'مسح سيولة واستعادة + أهداف POC/VWAP على 5م'},
+  {k:'SCALP_TREND', icon:'🐂', label:'ركوب التيار (سكالب تصحيح)', desc:'تصحيح إلى EMA20/VWAP في ترند قائم + استئناف دلتا على 5م (EL2.2.0)'},
+  {k:'SCALP_SQUEEZE', icon:'💥', label:'انفجار الاختناق (سكالب تقلب)', desc:'بولنجر داخل كيلتنر + انفجار بجسمه وحجمه ودلتاه على 5م (EL2.2.0)'},
 ];
 function openSettings(){
   renderSettingsList();
@@ -1617,6 +1757,7 @@ async function resetStats(){
   } catch(e){ toast('فشل التصفير: '+e.message); }
 }
 
+try{ if(localStorage.getItem(CF_SAVE)==='1') chartFloatOn(false); }catch(e){}
 refresh();
 setInterval(refresh, 30000);
 // [FE1.9.10] نبض الشارت المستقل — أسرع من دورة اللوحة (30ث) ليشعر بالحياة: الشمعة الجارية

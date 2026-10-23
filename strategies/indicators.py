@@ -95,6 +95,15 @@ def atr(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
 def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
         period: int = 14) -> Optional[float]:
     """ADX ويلدر — قوة الاتجاه 0..100 (بلا اتجاه). None إن لم يكتمل النضج."""
+    full = di(highs, lows, closes, period)
+    return None if full is None else full["adx"]
+
+
+def di(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+       period: int = 14) -> Optional[Dict[str, float]]:
+    """[EL2.2.0] ADX مع مؤشري الاتجاه +DI/−DI (تفكيك حسابات ويلدر ذاتها) —
+    يعيد {"adx","pdi","mdi"} آخر قيمة، أو None إن لم يكتمل النضج.
+    +DI/−DI يحتاجهما انفجار الاختناق ليفرّق الاندفاع الصاعد عن الهابط."""
     n = len(closes)
     if n < 2 * period + 1:
         return None
@@ -110,6 +119,7 @@ def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
     p_r = rma(plus_dm, period)
     m_r = rma(minus_dm, period)
     dxs: List[float] = []
+    pdi_last = mdi_last = float("nan")
     for i in range(n):
         if tr_r[i] != tr_r[i] or p_r[i] != p_r[i] or m_r[i] != m_r[i]:
             continue
@@ -118,6 +128,7 @@ def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
             continue
         pdi = 100.0 * p_r[i] / tr_r[i]
         mdi = 100.0 * m_r[i] / tr_r[i]
+        pdi_last, mdi_last = pdi, mdi
         denom = (pdi + mdi)
         dxs.append(100.0 * abs(pdi - mdi) / denom if denom > 0 else 0.0)
     if len(dxs) < period:
@@ -127,7 +138,9 @@ def adx(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
     prev = seed
     for v in dxs[period:]:
         prev = (prev * (period - 1) + v) / period
-    return float(prev)
+    if pdi_last != pdi_last:
+        return None
+    return {"adx": float(prev), "pdi": float(pdi_last), "mdi": float(mdi_last)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,6 +242,46 @@ def vwap_rolling(rows: Sequence[Dict[str, float]]) -> Optional[float]:
     if vv <= 0:
         return None
     return pv / vv
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# بولنجر وكيلتنر — قناتا التقلب لاستراتيجية انفجار الاختناق
+# ─────────────────────────────────────────────────────────────────────────────
+
+def bollinger(closes: Sequence[float], period: int = 20,
+              mult: float = 2.0) -> Optional[Dict[str, float]]:
+    """[EL2.2.0] بولنجر الكلاسيكية — SMA ± mult×الانحراف المعياري (عيّنة ddof=0
+    كما في منصات الرسم). يعيد آخر قيمة {"upper","mid","lower","width"} أو None."""
+    if len(closes) < period or period <= 0:
+        return None
+    mid = sma(closes, period)[-1]
+    if mid != mid:
+        return None
+    win = [float(v) for v in closes[-period:]]
+    mean = mid
+    var = sum((v - mean) ** 2 for v in win) / period
+    sd = math.sqrt(max(0.0, var))
+    upper, lower = mean + mult * sd, mean - mult * sd
+    return {"upper": upper, "mid": mean, "lower": lower,
+            "width": (upper - lower)}
+
+
+def keltner(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float],
+            period: int = 20, mult: float = 1.5) -> Optional[Dict[str, float]]:
+    """[EL2.2.0] كيلتنر — EMA(mid price) ± mult×ATR(RMA ويلدر). قناة التقلب
+    الثانية التي يُقاس عليها الاختناق: بولنجر داخل كيلتنر = طاقة مضغوطة.
+    يعيد آخر قيمة {"upper","mid","lower","width"} أو None."""
+    if len(closes) < period + 2 or period <= 0:
+        return None
+    mids = [(float(highs[i]) + float(lows[i]) + float(closes[i])) / 3.0
+            for i in range(len(closes))]
+    mid_series = ema(mids, period)
+    mid = mid_series[-1]
+    a = atr(highs, lows, closes, period)
+    if mid != mid or a is None or a <= 0:
+        return None
+    upper, lower = mid + mult * a, mid - mult * a
+    return {"upper": upper, "mid": mid, "lower": lower, "width": (upper - lower)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

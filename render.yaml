@@ -163,13 +163,15 @@ services:
         value: "360"
       - key: MEM_CRITICAL_MB
         value: "440"
-      # [EL2.0.0] الاستراتيجيات المتوازية — سكالب CVD + بروفايل القيمة جنبًا إلى جنب مع الموجات
+      # [EL2.2.0] الاستراتيجيات المتوازية — تدفق + تيار + اختناق جنبًا إلى جنب مع الموجات
       - key: SCALP_ENABLED
         value: "1"
       - key: SCALP_S1_ENABLED
         value: "1"       # انجلال التدفق: زخم CVD + SuperTrend + جدران سيولة
-      - key: SCALP_S2_ENABLED
-        value: "1"       # ارتداد القيمة: Volume Profile + امتصاص CVD + فيبو
+      - key: SCALP_TREND_ENABLED
+        value: "1"       # ركوب التيار: تصحيح في ترند قائم + استئناف دلتا (EL2.2.0)
+      - key: SCALP_SQUEEZE_ENABLED
+        value: "1"       # انفجار الاختناق: بولنجر داخل كيلتنر + انفجار جسمه (EL2.2.0)
       - key: SCALP_EXEC_TF
         value: "5m"
       - key: SCALP_SYMBOLS_N
