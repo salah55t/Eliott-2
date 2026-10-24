@@ -5,3 +5,5 @@ data/
 logs/
 *.log
 .env
+backtest_cache/
+*.pkl

@@ -46,6 +46,13 @@ class ScalpConfig:
     entry_chase_atr: float = _env_f("SCALP_ENTRY_CHASE_ATR", 0.4)  # أقصى ابتعاد سعر حي عن إغلاق القرار
     min_notional: float = _env_f("SCALP_MIN_NOTIONAL", 10.0)
     symbols_n: int = _env_i("SCALP_SYMBOLS_N", 8)              # عدد الرموز الافتراضي من القائمة
+    # [EL2.4.0] دروس الباك تاست BT-LAB (45 يومًا، PF 0.24 → 2.05):
+    di_gate: float = _env_f("SCALP_DI_GATE", 1.0)              # +DI > −DI إلزامي (ADX بلا اتجاه)
+    htf_gate: float = _env_f("SCALP_HTF_GATE", 1.0)            # SuperTrend(10,3.0) على 1h صاعد
+    retrace_atr: float = _env_f("SCALP_RETRACE_ATR", 0.6)      # أمر محدد بعمق ×ATR تحت إغلاق القرار (0 = ملء فوري قديم)
+    retrace_expiry: int = _env_i("SCALP_RETRACE_EXPIRY", 8)    # صلاحية الأمر الارتدادي بشموع 5m
+    trail_atr: float = _env_f("SCALP_TRAIL_ATR", 1.0)          # تتبع القمة بعد الجزئي+BE (ورقي؛ 0 = معطل)
+    cancel_cooldown_sec: int = _env_i("SCALP_CANCEL_COOLDOWN_SEC", 900)  # تبريد بعد إبطال/انتهاء أمر ارتدادي
 
 
 SCALP_CONFIG = ScalpConfig()
@@ -65,6 +72,7 @@ class ScalpContext:
     atr15: Optional[float] = None
     fib_confluence: Optional[Dict[str, float]] = None  # مستويات فيبو آخر ساق (من زيجزاج المحرك)
     extra: Dict[str, Any] = field(default_factory=dict)
+    k1h: Optional[List[Dict[str, float]]] = None   # [EL2.4.0] شموع 1h (انحياز الفريم الأعلى — fail-open عند غيابها)
 
 
 @dataclass

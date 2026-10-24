@@ -50,7 +50,9 @@ services:
       - key: RISK_PCT_PER_TRADE
         value: "1.0"
       - key: PENDING_MAX_CANDLES
-        value: "6"   # [FE1.8.3] 6 شموع (1.5س على 15m) بدل 3 — صلاحية أطول للأمر المعلق يرفع فرص الامتلاء
+        value: "10"  # [EL2.4.0] 10 شموع (2.5س على 15m) — درس باك تاست E7/E8: امتلاء أعلى بلا إفساد الجودة
+      - key: ELLIOTT_SL_CAP_ATR
+        value: "2.0" # [EL2.4.0] سقف المخاطرة البنيوية ×ATR15 — درس E7: PF 1.41→1.62 والذيل -103$→-46$
       - key: PAPER_BALANCE
         value: "10000"
       # [FE1.0.1] سلسلة مزودي البيانات: باينانس أولًا ثم البدائل آليًا عند حظر/فشل باينانس
@@ -194,3 +196,16 @@ services:
         value: "50"
       - key: SCALP_RR_NET_MIN
         value: "0.3"
+      # [EL2.4.0] دروس الباك تاست BT-LAB (45 يومًا): PF السكالب 0.24 → 2.05
+      - key: SCALP_DI_GATE
+        value: "1"       # +DI > −DI إلزامي — ADX بلا اتجاه كان يمرر شراءً عكسيًا
+      - key: SCALP_HTF_GATE
+        value: "1"       # SuperTrend(10,3.0) على 1h صاعد — لا شراء ضد ترند الساعة
+      - key: SCALP_RETRACE_ATR
+        value: "0.6"     # أمر محدد بعمق ×ATR تحت إغلاق القرار — لا مطاردة شمعة الانفجار
+      - key: SCALP_RETRACE_EXPIRY
+        value: "8"       # صلاحية الأمر الارتدادي (شموع 5m)
+      - key: SCALP_TRAIL_ATR
+        value: "1.0"     # تتبع القمة بعد الجزئي+BE (ورقي) — درس S12: PF 1.53→1.69
+      - key: SCALP_CANCEL_COOLDOWN_SEC
+        value: "900"     # تبريد 15د بعد إبطال/انتهاء أمر ارتدادي

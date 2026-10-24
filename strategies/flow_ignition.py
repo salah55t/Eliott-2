@@ -12,14 +12,23 @@
 
 بوابات الدخول (كلها إلزامية بالترتيب):
   G1 بيانات: ≥60 شمعة 5m مغلقة + سعر حي موجود ضمن 0.4×ATR من الإغلاق (لا ملاحقة).
-  G2 اتجاه: SuperTrend(10, 2.5) على 5m صاعد، والتأكيد: SuperTrend(10, 3.0) على
-     15m صاعد **أو** ADX(14) ≥ 22 (زخم محلي قوي يكفي حين يتخلف الفريم الأعلى).
+  G2 اتجاه: SuperTrend(10, 2.5) على 5m صاعد، والتأكيد: SuperTrend(10, 3.0) على 15m صاعد **أو** ADX(14) ≥ 22 (زخم محلي قوي يكفي حين يتخلف الفريم الأعلى).
+  G2c اتجاه DI [EL2.4.0]: +DI > −DI — درس الباك تاست: ADX بلا اتجاه يرتفع في
+     الهبوط الحاد أيضًا ف«يؤكد» شراءً عكسيًا (AVAX: 14 صفقة إصابة 7%).
+  G7 انحياز الساعة [EL2.4.0]: SuperTrend(10, 3.0) على 1h صاعد — فلسفة flowsurface
+     متعددة الفريمات: لا شراء ضد ترند الساعة (fail-open عند غياب شموع 1h).
   G3 اندلاع الدلتا: CVD(5m) فوق أعلى قيمة له في آخر 36 شمعة سابقة وفوق EMA12 له.
   G4 حجم: حجم شمعة القرار ≥ 1.3× متوسط 20 شمعة.
   G5 موقع: الإغلاق فوق VWAP الجلسة وفوق POC (المشترون يسيطرون) وليس ممددًا
      (ضمن 1.4×ATR من EMA20).
   G6 هندسة المخاطرة: R:R صافي حتى TP1 ≥ أرضية المحرك (0.3) — والموقف بنيويًا
      في ترتيب sl < entry < tp1 < tp2 صارم.
+
+التنفيذ [EL2.4.0] — «لا مطاردة شمعة الانفجار»: بدل شراء سوق عند إغلاق شمعة
+الاندلاع (قمة الدفعة غالبًا)، يضع المدير أمرًا محددًا بعمق SCALP_RETRACE_ATR×ATR
+تحت إغلاق القرار، صالحًا SCALP_RETRACE_EXPIRY شموع 5m، لا يُملأ إلا بشمعة رفض
+مؤكدة (لمست الحد وأغلقت فوقه — مضاد السكاكين الساقطة)، ويُلغى عند كسر الوقف
+المرجعي أو انقلاب SuperTrend. درس BT-LAB: هذا التغيير وحده قلب PF من 0.57 إلى 1.53.
 
 إدارة الموضع (المدير): جزئي 50% عند TP1 + نقل الوقف لنقطة الدخول (BE) — نفس
 عقيدة الحماية المحمية للمحرك — والباقي عند TP2 أو انقلاب الدلتا ضدنا أو المهلة.
@@ -72,7 +81,8 @@ class FlowIgnition(ScalpStrategyBase):
         st5 = ind.supertrend(highs, lows, closes, ST5[0], ST5[1])
         if not st5 or st5["dir"] != 1.0:
             return None
-        adx5 = ind.adx(highs, lows, closes, 14)
+        d5 = ind.di(highs, lows, closes, 14)
+        adx5 = d5["adx"] if d5 else None
         st15 = None
         if len(ctx.k15 or []) >= 25:
             h15 = [float(r["high"]) for r in ctx.k15]
@@ -81,6 +91,11 @@ class FlowIgnition(ScalpStrategyBase):
             st15 = ind.supertrend(h15, l15, c15, ST15[0], ST15[1])
         confirmed = (st15 and st15["dir"] == 1.0) or (adx5 is not None and adx5 >= ADX_MIN)
         if not confirmed:
+            return None
+        # G2c بوابة الاتجاه [EL2.4.0] — ADX بلا اتجاه: درس BT-LAB (45 يومًا):
+        # تأكيد ADX≥22 وحده كان يمرر شراءً في هبوط حاد (DI− مسيطر) — AVAX وحدها
+        # خسرت 123$ بـ WR 7%. اشتراط +DI > −DI يجعل التأكيد اتجاهيًا صريحًا.
+        if self.cfg.di_gate >= 1 and d5 and not (d5["pdi"] > d5["mdi"]):
             return None
 
         # G3 اندلاع الدلتا (CVD يقود)
@@ -111,6 +126,16 @@ class FlowIgnition(ScalpStrategyBase):
         vp = ind.volume_profile(rows)
         if vp and close <= vp["poc"]:
             return None
+
+        # G7 انحياز الساعة [EL2.4.0] — SuperTrend(10,3.0) على 1h صاعد (فلسفة flowsurface
+        # متعددة الفريمات). درس BT-LAB: قتل الصفقات عكس ترند الساعة نصف تقريبًا خسائر
+        # السكالب. غياب شموع 1h = fail-open (انسحاب صادق لا تجميد للبوت).
+        if self.cfg.htf_gate >= 1 and ctx.k1h:
+            st1 = ind.supertrend([float(r["high"]) for r in ctx.k1h],
+                                 [float(r["low"]) for r in ctx.k1h],
+                                 [float(r["close"]) for r in ctx.k1h], 10, 3.0)
+            if st1 and st1["dir"] != 1.0:
+                return None
 
         # الوقف: ATR مضبوط بآخر قاع مؤكد — مُثبَّت داخل حدود السكالب (0.55–1.4×ATR)
         # التثبيت لا الرفض: قاع قريب جدًا يُوسَّع للحد الأدنى (مساحة تنفس)، وقاع بعيد يُقص

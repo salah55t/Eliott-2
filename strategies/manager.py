@@ -172,15 +172,18 @@ def resolve_symbols() -> List[str]:
     return usdt[: max(1, SCALP_CONFIG.symbols_n)]
 
 
-def _cooldown_set(strategy: str, symbol: str) -> None:
+def _cooldown_set(strategy: str, symbol: str, sec: Optional[float] = None) -> None:
+    # [EL2.4.0] مدة اختيارية: تبريد إبطال الأوامر الارتدادية أقصر من تبريد الصفقات
     with _lock:
-        _cooldowns.setdefault(strategy, {})[symbol] = time.time()
+        dur = float(sec if sec is not None else SCALP_CONFIG.cooldown_sec)
+        _cooldowns.setdefault(strategy, {})[symbol] = (time.time(), dur)
 
 
 def _cooldown_left(strategy: str, symbol: str) -> float:
     with _lock:
-        ts = _cooldowns.get(strategy, {}).get(symbol, 0.0)
-    rem = SCALP_CONFIG.cooldown_sec - (time.time() - ts)
+        val = _cooldowns.get(strategy, {}).get(symbol, 0.0)
+    ts, dur = (val if isinstance(val, tuple) else (float(val), SCALP_CONFIG.cooldown_sec))
+    rem = dur - (time.time() - ts)
     return max(0.0, rem)
 
 
@@ -247,6 +250,8 @@ def _build_ctx(symbol: str) -> Optional[ScalpContext]:
     if raw15:
         k15 = ind.closed_rows(ind.rows_from_basic(raw15), 900, now)
 
+    k1h: List[Dict[str, float]] = _k1h_rows(symbol, now)
+
     live = _hf("get_live_price", symbol)
     depth = _hf("binance_depth", symbol, 100) if HOST.get("binance_depth") else None
 
@@ -266,10 +271,33 @@ def _build_ctx(symbol: str) -> Optional[ScalpContext]:
         if p2 > p1 and (i2 - i1) >= 3:
             fib = ind.fib_retrace_levels(p1, p2)   # ساق صاعد — تصحيحات 0.618/0.786
 
-    return ScalpContext(symbol=symbol, now_ts=now, k5=rows, k15=k15, live_price=live,
+    return ScalpContext(symbol=symbol, now_ts=now, k5=rows, k15=k15, k1h=k1h,
+                        live_price=live,
                         depth=depth, cvd_source=src, atr5=a5, atr15=a15,
                         fib_confluence=fib,
                         extra={"fee_rate": float(HOST.get("fee_rate") or 0.001)})
+
+
+# [EL2.4.0] شموع 1h مع كاش TTL — انحياز الفريم الأعلى (G7) بلا ثقل REST:
+# نداء واحد لكل رمز كل 10 دقائق بدل كل دورة مسح. الفشل = قائمة فارغة (fail-open
+# في الاستراتيجية — لا تجميد للبوت عند عطل المزود).
+_K1H_TTL_SEC = 600.0
+_k1h_cache: Dict[str, Tuple[float, List[Dict[str, float]]]] = {}
+
+
+def _k1h_rows(symbol: str, now: float) -> List[Dict[str, float]]:
+    hit = _k1h_cache.get(symbol)
+    if hit and (now - hit[0]) < _K1H_TTL_SEC:
+        return hit[1]
+    rows: List[Dict[str, float]] = []
+    try:
+        raw, _src = _hf("fetch_ohlcv_raw", symbol, "1h", 120) or (None, None)
+        if raw:
+            rows = ind.closed_rows(ind.rows_from_basic(raw), 3600, now)
+    except Exception:
+        rows = []
+    _k1h_cache[symbol] = (now, rows)
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -334,19 +362,25 @@ def _size_position(entry: float, sl: float) -> Tuple[Optional[float], Optional[f
     return qty, notional, ""
 
 
-def _open_position(sig: ScalpSignal) -> bool:
+def _open_position(sig: ScalpSignal, fill_price: Optional[float] = None) -> bool:
     """فتح صفقة سكالب — ورقي: ملء فوري بسعر حي. حقيقي: شراء سوق quoteOrderQty
-    + وقف راكن على المنصة (الحماية تعيش على باينانس لا في الذاكرة)."""
+    + وقف راكن على المنصة (الحماية تعيش على باينانس لا في الذاكرة).
+    [EL2.4.0] fill_price: ملء أمر ارتدادي محدد — ورقي حصرًا، السعر الفعلي عند
+    اللمس المؤكد، ويحمل حارس الملاحقة لأن البعد عن إغلاق القرار هو المقصود."""
     cfg = SCALP_CONFIG
-    live = _hf("get_live_price", sig.symbol) or sig.entry_ref
-    fill = live
-    # حارس الملاحقة: الابتعاد عن إغلاق القرار بحدّ ATR يعني أن الفرصة راحت — لا دخول
-    atr_ref = float(sig.meta.get("atr5") or 0)
-    chase_tol = cfg.entry_chase_atr * (atr_ref if atr_ref > 0 else sig.entry_ref)
-    if abs(fill - sig.entry_ref) > chase_tol:
-        _reject(sig.strategy, "السعر ابتعد عن إغلاق القرار")
-        return False
     real = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
+    if fill_price is not None:
+        if real:
+            return _open_position(sig)      # الحقيقي: ملء فوري كالقديم (لا أوامر ارتدادية)
+        fill = float(fill_price)
+    else:
+        fill = _hf("get_live_price", sig.symbol) or sig.entry_ref
+        # حارس الملاحقة: الابتعاد عن إغلاق القرار بحدّ ATR يعني أن الفرصة راحت — لا دخول
+        atr_ref = float(sig.meta.get("atr5") or 0)
+        chase_tol = cfg.entry_chase_atr * (atr_ref if atr_ref > 0 else sig.entry_ref)
+        if abs(fill - sig.entry_ref) > chase_tol:
+            _reject(sig.strategy, "السعر ابتعد عن إغلاق القرار")
+            return False
     order_id = None
     if real:
         ex = _hf("binance_trade_exchange")
@@ -381,6 +415,8 @@ def _open_position(sig: ScalpSignal) -> bool:
     meta = dict(sig.meta)
     meta.update({"fill": fill, "partial_done": False, "be_done": False,
                  "opened_by": "scalp_manager", "max_hold_min": cfg.max_hold_min})
+    if fill_price is not None:
+        meta["retrace_fill"] = True   # [EL2.4.0] أصل الملء: أمر ارتدادي مؤكد
     now_iso = _hf("utc_now_iso") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     _hf("db_execute",
         "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price, fill_price,"
@@ -404,6 +440,101 @@ def _open_position(sig: ScalpSignal) -> bool:
     return True
 
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# [EL2.4.0] الأوامر الارتدادية المؤكدة — «لا مطاردة شمعة الانفجار»
+# درس الباك تاست BT-LAB (45 يومًا): الشراء عند إغلاق شمعة الاندلاع كان يشتري
+# قمة الدفعة — 73% وقفات. الأمر المحدد بعمق 0.6×ATR مع ملء بشمعة رفض مؤكدة
+# (لمست الحد وأغلقت فوقه) قلب السكالب من PF 0.24 إلى 2.05. نفس المنطق حرفيًا:
+#   إبطال: إغلاق شمعة 5m تحت الوقف المرجعي | انتهاء الصلاحية (8 شموع)
+#   ملء: low ≤ الحد AND close ≥ الحد → fill = min(الحد، الفتح)
+#   بوابات الملء تُعاد لحظة التنفيذ (السقوف والقاطع والمشغول قد تغيّروا)
+# ─────────────────────────────────────────────────────────────────────────────────
+
+_retrace_orders: Dict[str, Dict[str, Any]] = {}   # symbol → أمر ارتدادي معلق (ورقي)
+
+
+def retrace_pending() -> Dict[str, Dict[str, Any]]:
+    """لقطة قراءة للأوامر الارتدادية المعلقة (للعرض في اللوحة/API)."""
+    with _lock:
+        return json.loads(json.dumps(_retrace_orders))
+
+
+def _arm_retrace(sig: ScalpSignal) -> bool:
+    """تسلّح أمر ارتدادي بدل الشراء الفوري (ورقي). فشل التسلّح = المسار القديم."""
+    cfg = SCALP_CONFIG
+    atr5 = float(sig.meta.get("atr5") or 0)
+    if atr5 <= 0:
+        return _open_position(sig)            # بلا ATR — المسار القديم (fail-open)
+    limit = float(sig.entry_ref) - cfg.retrace_atr * atr5
+    if limit <= 0 or limit <= float(sig.sl):
+        return _open_position(sig)            # عمق غير منطقي — المسار القديم
+    with _lock:
+        _retrace_orders[sig.symbol] = {
+            "strategy": sig.strategy, "label": sig.label, "symbol": sig.symbol,
+            "limit": limit, "sl_ref": float(sig.sl), "tp1": float(sig.tp1),
+            "tp2": float(sig.tp2), "rr1": float(sig.rr1 or 0.0),
+            "entry_ref": float(sig.entry_ref), "atr5": atr5,
+            "reason": sig.reason, "armed_ts": time.time(),
+            "expires_ts": time.time() + cfg.retrace_expiry * cfg.tf_sec,
+            "meta": dict(sig.meta),
+        }
+    _bump(sig.strategy, "retrace_born")
+    fp = HOST.get("fmt_price") or (lambda p: f"{p:.6g}")
+    _log("info",
+         f"⏳ أمر ارتدادي ({sig.label}): {sig.symbol} حد {fp(limit)} "
+         f"(عمق {cfg.retrace_atr}×ATR تحت {fp(sig.entry_ref)}) — صلاحية "
+         f"{cfg.retrace_expiry} شمعة 5m، الملء بشمعة رفض مؤكدة فقط",
+         "SCALP_RETRACE")
+    return True
+
+
+def _manage_retrace(sym: str, ctx: ScalpContext) -> None:
+    """إدارة الأمر الارتدادي على شمعة 5m مغلقة — نفس منطق المختبر حرفيًا."""
+    cfg = SCALP_CONFIG
+    od = _retrace_orders.get(sym)
+    if od is None or not ctx.k5:
+        return
+    c = ctx.k5[-1]
+    lo, op, close = float(c["low"]), float(c["open"]), float(c["close"])
+    now = time.time()
+    # 1) الإبطال — الفرضية ماتت (إغلاق تحت الوقف المرجعي)
+    if close < od["sl_ref"]:
+        _retrace_orders.pop(sym, None)
+        _cooldown_set(od["strategy"], sym, cfg.cancel_cooldown_sec)
+        _bump(od["strategy"], "retrace_cancelled")
+        return
+    # 2) انتهاء الصلاحية
+    if now > od["expires_ts"]:
+        _retrace_orders.pop(sym, None)
+        _cooldown_set(od["strategy"], sym, cfg.cancel_cooldown_sec)
+        _bump(od["strategy"], "retrace_expired")
+        return
+    # 3) الملء بشمعة رفض مؤكدة: لمست الحد وأغلقت فوقه (مضاد السكاكين الساقطة)
+    if lo > od["limit"] or close < od["limit"]:
+        return
+    fill = min(od["limit"], op)               # فجوة تحت الحد = ملء بالفتح (أفضل)
+    # بوابات إعادة الفحص لحظة الملء — السياق تغيّر خلال الانتظار
+    ok, why = True, ""
+    if _scalp_open_count() >= cfg.max_total_open:
+        ok, why = False, "سقف صفقات السكالب المفتوحة"
+    elif _hf("symbol_has_active", sym):
+        ok, why = False, "صفقة نشطة على الرمز"
+    elif _daily_loss_block(od["strategy"]):
+        ok, why = False, "قاطع خسارة اليوم"
+    if not ok:
+        _retrace_orders.pop(sym, None)
+        _cooldown_set(od["strategy"], sym, cfg.cancel_cooldown_sec)
+        _reject(od["strategy"], f"ملء ارتدادي أُسقط: {why}")
+        return
+    _retrace_orders.pop(sym, None)
+    _bump(od["strategy"], "retrace_filled")
+    sig = ScalpSignal(strategy=od["strategy"], label=od["label"], symbol=sym,
+                      entry_ref=od["entry_ref"], sl=od["sl_ref"], tp1=od["tp1"],
+                      tp2=od["tp2"], rr1=od["rr1"], reason=od["reason"],
+                      meta=dict(od["meta"]))
+    _open_position(sig, fill_price=fill)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # دورة المسح — بعد إغلاق كل شمعة 5m
 # ─────────────────────────────────────────────────────────────────────────────
@@ -424,6 +555,11 @@ def _scan_cycle() -> Dict[str, int]:
         if ctx is None:
             stats["ctx_fail"] += 1
             continue
+        # [EL2.4.0] الأوامر الارتدادية أولًا (ملء/إبطال/انتهاء) — والمعلق يحتكر الرمز
+        if sym in _retrace_orders:
+            _manage_retrace(sym, ctx)
+            if sym in _retrace_orders:          # ما زال معلقًا — لا تقييم جديد عليه
+                continue
         for name, strat in list(_instances.items()):
             ok, why = _entry_gates(name, sym)
             if not ok:
@@ -441,6 +577,12 @@ def _scan_cycle() -> Dict[str, int]:
             if not sig.side == "LONG":            # حارس سبوت صريح
                 _reject(name, "سبوت: لا بيع مكشوف")
                 continue
+            # [EL2.4.0] لا مطاردة شمعة الانفجار — أمر ارتدادي (ورقي) بدل الشراء الفوري
+            real_mode = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
+            if cfg.retrace_atr > 0 and not real_mode:
+                if _arm_retrace(sig):
+                    stats["signals"] += 1
+                    break                         # رمز واحد = أمر واحد بالدورة
             if _open_position(sig):
                 stats["signals"] += 1
                 break                             # رمز واحد = صفقة سكالب واحدة بالدورة
@@ -641,6 +783,19 @@ def _monitor_cycle() -> Dict[str, int]:
                 _close_position(sig, tp2, "هدف سكالب الثاني (نهاية الموجة القصيرة)", "tp")
                 stats["tp2"] += 1
                 continue
+            # 2b) [EL2.4.0] تتبع القمة بعد الجزئي+BE — درس BT-LAB (S12: PF 1.53→1.69):
+            # المتبقي بعد BE يتبع chandelier قمة الصفقة ناقص trail_atr×ATR5 — يصعد
+            # الوقف مع الصعود ويقطع الانعكاسات أبكر من انتظار TP2 أو المهلة.
+            # ورقي حصرًا — الحقيقي وقفه راكن على المنصة وتعديله المتكرر مخاطرة تنفيذ.
+            trail_atr = float(cfg.trail_atr or 0)
+            if trail_atr > 0 and meta.get("be_done") and not sig.get("is_real"):
+                atr5_m = float(meta.get("atr5") or 0)
+                if atr5_m > 0:
+                    new_sl = peak - trail_atr * atr5_m
+                    if new_sl > 0 and new_sl > float(sig.get("stop_loss") or 0) and new_sl < live:
+                        _hf("db_execute", "UPDATE signals SET stop_loss=%s WHERE id=%s",
+                            (new_sl, sig["id"]))
+                        sig["stop_loss"] = new_sl
             # 4) مهلة الصفقة — [EL2.2.0] مهلة خاصة عبر meta (max_hold_override) عند وجودها
             hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min
             created = str(sig.get("created_at") or "")

@@ -63,7 +63,7 @@ class TestRelaxedGates:
 
     def test_new_defaults(self):
         assert vnz.MAX_STRUCTURE_AGE_BARS == 36      # [FE1.8.6] بدل 30 — إثبات حي: 43 رفض تقادم مرت كلها بوابة الفرضية
-        assert vnz.PENDING_MAX_CANDLES == 6          # بدل 3 — صلاحية أطول للانتظار
+        assert vnz.PENDING_MAX_CANDLES == 10          # بدل 3 — صلاحية أطول للانتظار
 
     def test_structure_fresh_boundary_at_30(self, monkeypatch):
         # عمر 30 شمعة (7.5س على 15m) = صالح | عمر 31 = رفض — الحد FE1.8.6 بالضبط
@@ -77,13 +77,14 @@ class TestRelaxedGates:
         monkeypatch.setattr(vnz, "MAX_STRUCTURE_AGE_BARS", 0)
         assert vnz.structure_fresh(_StubSetup(5), [{"close": 1.0}] * 10) is True
 
-    def test_pending_validity_doubled(self):
-        # صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 90 دقيقة
+    def test_pending_validity_extended(self):
+        # [EL2.4.0] صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 2.5 ساعة
+        # (درس باك تاست E7/E8: امتلاء أعلى 31%→37% بلا إفساد الجودة)
         assert vnz.SIGNAL_TIMEFRAME in vnz.TF_SECONDS
         expected_sec = vnz.PENDING_MAX_CANDLES * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
-        assert expected_sec == 6 * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
+        assert expected_sec == 10 * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
         if vnz.SIGNAL_TIMEFRAME == "15m":
-            assert expected_sec == 5400  # 1.5 ساعة بدل 45 دقيقة
+            assert expected_sec == 9000  # 2.5 ساعة بدل 1.5 ساعة
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,8 +95,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.3.0"
-        assert panel.BOT_VERSION == "EL2.3.0"
+        assert vnz.BOT_VERSION == "EL2.4.0"
+        assert panel.BOT_VERSION == "EL2.4.0"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -104,7 +105,7 @@ class TestProtectedBoundaries:
         assert 'value: "60"' in y          # KEEP_ALIVE_INTERVAL_SEC
         assert 'value: "30"' in y          # MAX_STRUCTURE_AGE_BARS [FE1.8.6]
         assert 'value: "2700"' in y        # IDLE_RESCAN_MIN_GAP_SEC [FE1.8.6]
-        assert 'value: "6"' in y           # PENDING_MAX_CANDLES
+        assert 'value: "10"' in y          # PENDING_MAX_CANDLES [EL2.4.0]
         # القديم (نبضة 600ث) أزيل كليًا — value: "600" الحالية ملك BAN_LONG_THRESHOLD_SEC [FE1.8.7]
         assert "- key: KEEP_ALIVE_INTERVAL_SEC\n        value: \"600\"" not in y
 
