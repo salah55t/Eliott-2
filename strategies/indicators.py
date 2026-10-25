@@ -346,6 +346,38 @@ def nearest_wall(walls: Sequence[Tuple[float, float]], above: bool,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# [EL2.4.1][F2] حدود السعر منذ لحظة الحدث — المساعدات النقية (بلا I/O)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def candle_open_epoch(last):
+    """[EL2.4.1][F2] وقت فتح الشمعة (epoch ثوانٍ) من عمود timestamp — None إن غاب (سلوك قديم)."""
+    try:
+        return float(last["timestamp"].timestamp())
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def merge_extremes(state, since_ts, live, candle_open_ts=None,
+                   candle_high=None, candle_low=None, slack=15.0):
+    """[EL2.4.1][F2] أعلى/أدنى سعر منذ since_ts. state = القاموس السابق أو None.
+    السعر الحي يُدمج دائمًا؛ حدّا الشمعة يُدمجان فقط إن فُتحت الشمعة بعد since_ts - slack
+    (أو candle_open_ts is None = سلوك قديم/اختبارات). حالة أقدم من since_ts تُهمل (إعادة بذر)."""
+    keep = state if (state and float(state.get("since", 0.0)) >= float(since_ts)) else None
+    hi = keep["hi"] if keep else None
+    lo = keep["lo"] if keep else None
+    pts = []
+    if live:
+        pts.append(float(live))
+    if candle_high is not None and candle_low is not None and (
+            candle_open_ts is None or float(candle_open_ts) >= float(since_ts) - slack):
+        pts += [float(candle_high), float(candle_low)]
+    for p in pts:
+        hi = p if hi is None else max(hi, p)
+        lo = p if lo is None else min(lo, p)
+    return {"since": float(since_ts), "hi": hi, "lo": lo}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # أدوات بنية مساعدة
 # ─────────────────────────────────────────────────────────────────────────────
 

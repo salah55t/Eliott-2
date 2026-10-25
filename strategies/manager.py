@@ -87,6 +87,26 @@ _counters: Dict[str, Dict[str, Any]] = {
 }
 _cooldowns: Dict[str, Dict[str, float]] = {n: {} for n in STRATEGY_NAMES}
 
+# [EL2.4.1][F2] حالة حدود السعر منذ لحظة الحدث — ذاكرة العملية حصرًا: ("o", id) للمفتوح
+_EXT_STATE: Dict[Tuple[str, int], Dict[str, float]] = {}
+
+
+def _iso_epoch(s: Any) -> float:
+    """[EL2.4.1][F2] 'YYYY-MM-DDTHH:MM:SS...' (أول 19 حرفًا، UTC) → epoch ثوانٍ؛
+    0.0 عند الفشل ⇒ سلوك قديم (fail-open)."""
+    try:
+        return datetime.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ext_forget(row_id: Any) -> None:
+    """[EL2.4.1][F2] مسح حالة الحدود عند نهاية دورة حياة الصف (إغلاق نهائي)."""
+    _EXT_STATE.pop(("p", row_id), None)
+    _EXT_STATE.pop(("o", row_id), None)
+
+
 _instances: Dict[str, Any] = {}
 
 
@@ -695,6 +715,7 @@ def _close_position(sig: Dict[str, Any], price: float, reason: str, klass: str =
         _hf("close_real_trade", sig, price, reason)
     else:
         _hf("close_signal_row", sig, price, reason)
+    _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة — مسح حالة الحدود
     _cooldown_set(sig["strategy_name"], sig["symbol"])
     _bump(sig["strategy_name"], "closes", klass)
 
@@ -738,11 +759,19 @@ def _monitor_cycle() -> Dict[str, int]:
             if live <= 0:
                 continue
             df = _hf("get_recent_candles", sym, SCALP_CONFIG.exec_tf, 2, 1)
-            high_now, low_now = live, live
-            if df is not None and not df.empty:
-                last = df.iloc[-1]
-                high_now = max(high_now, float(last["high"]))
-                low_now = min(low_now, float(last["low"]))
+            # [EL2.4.1][F2] الحدود منذ لحظة الملء/آخر تسليح — حدّا الشمعة الجارية لا
+            # يُحسبان إن فُتحت قبل الحدث (لا وقف مبكر ولا هدف بسعر سبق الدخول)
+            meta = _sig_meta(sig)
+            since_ts = max(_iso_epoch(sig.get("filled_at")), float(meta.get("armed_at") or 0.0))
+            key = ("o", sig["id"])
+            last = df.iloc[-1] if (df is not None and not df.empty) else None
+            st = ind.merge_extremes(_EXT_STATE.get(key), since_ts, live,
+                                    ind.candle_open_epoch(last) if last is not None else None,
+                                    float(last["high"]) if last is not None else None,
+                                    float(last["low"]) if last is not None else None)
+            _EXT_STATE[key] = st
+            high_now = st["hi"] if st["hi"] is not None else live
+            low_now = st["lo"] if st["lo"] is not None else live
             stats["open"] += 1
             # تتبع القمة (يُعرض في اللوحة)
             peak = max(float(sig.get("peak_price") or live), high_now)
@@ -757,7 +786,6 @@ def _monitor_cycle() -> Dict[str, int]:
                 _close_position(sig, sl_now, sl_reason, "sl")
                 stats["sl"] += 1
                 continue
-            meta = _sig_meta(sig)
             # 2) الجزئي عند TP1 + نقل الوقف لنقطة الدخول (BE) — مرة واحدة
             tp1 = float(sig.get("tp1") or 0)
             fill = float(sig.get("fill_price") or 0)
@@ -767,6 +795,8 @@ def _monitor_cycle() -> Dict[str, int]:
                     meta["be_done"] = True
                     # BE نقي: الوقف لنقطة الدخول — المتبقي يطير نحو TP2 بلا مخاطرة
                     # (عقيدة محمية: أي قفل أبكر من BE يقطع العداء نحو الهدف الثاني)
+                    # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف في UPDATE واحد
+                    meta["armed_at"] = time.time()
                     _hf("db_execute", "UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
                         (fill, json.dumps(meta, ensure_ascii=False), sig["id"]))
                     sig["stop_loss"] = fill
@@ -793,8 +823,10 @@ def _monitor_cycle() -> Dict[str, int]:
                 if atr5_m > 0:
                     new_sl = peak - trail_atr * atr5_m
                     if new_sl > 0 and new_sl > float(sig.get("stop_loss") or 0) and new_sl < live:
-                        _hf("db_execute", "UPDATE signals SET stop_loss=%s WHERE id=%s",
-                            (new_sl, sig["id"]))
+                        # [EL2.4.1][F2] تسليح الحدود مع كل رفع تتبع — UPDATE واحد للوقف والحالة
+                        meta["armed_at"] = time.time()
+                        _hf("db_execute", "UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
+                            (new_sl, json.dumps(meta, ensure_ascii=False), sig["id"]))
                         sig["stop_loss"] = new_sl
             # 4) مهلة الصفقة — [EL2.2.0] مهلة خاصة عبر meta (max_hold_override) عند وجودها
             hold_min = int(meta.get("max_hold_override") or 0) or SCALP_CONFIG.max_hold_min

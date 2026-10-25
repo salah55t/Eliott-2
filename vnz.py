@@ -3653,6 +3653,7 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
         " pnl_usdt=%s, pnl_pct=%s, exit_order_id=%s WHERE id=%s",
         (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), exit_order_id, sig["id"]),
     )
+    _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة — مسح حالة الحدود
     _risk_on_close(pnl_usdt)  # [FE1.8.0] قاطع المخاطر: حد يومي + متتاليات
     _resolve_manual_close(sig)  # [FE1.9.8] أي إغلاق فعلي يمسح علم «غلق يدوي مطلوب»
     tag = "حقيقية 🔴" if is_real else "ورقية"
@@ -4147,13 +4148,19 @@ def _protection_step(sig: Dict[str, Any], high_now: float) -> None:
                   f"{fmt_price(entry)} والموضع بلا مخاطرة")
         if is_real and REAL_STANDING_STOP:
             if _replace_real_stop(sig, entry, ex):
-                db.execute("UPDATE signals SET stop_loss=%s WHERE id=%s", (entry, sig["id"]))
+                # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف الراكن في UPDATE واحد
+                meta["armed_at"] = time.time()
+                db.execute("UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
+                           (entry, json.dumps(meta, ensure_ascii=False), sig["id"]))
                 sig["stop_loss"] = entry
                 meta["be_done"] = True
                 log_and_notify("info", be_msg, "BREAK_EVEN")
             # فشل الاستبدال (راكن حي/فشل عابر) → بلا علم — تعاد المحاولة في الدورة القادمة
         else:
-            db.execute("UPDATE signals SET stop_loss=%s WHERE id=%s", (entry, sig["id"]))
+            # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف في UPDATE واحد
+            meta["armed_at"] = time.time()
+            db.execute("UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
+                       (entry, json.dumps(meta, ensure_ascii=False), sig["id"]))
             sig["stop_loss"] = entry
             meta["be_done"] = True
             log_and_notify("info", be_msg, "BREAK_EVEN")
@@ -4282,6 +4289,8 @@ def reconcile_live_targets() -> None:
             meta = _sig_meta(sig)
             first_cap = not meta.get("tp_week_capped")
             meta["tp_week_capped"] = True
+            if sig.get("status") == "open":
+                meta["armed_at"] = time.time()   # [EL2.4.1][F2] قص هدف صفقة مفتوحة = حدث تسليح جديد للحدود
             sets.append("meta_json = %s")
             vals.append(json.dumps(meta, ensure_ascii=False))
             vals.append(sig["id"])
@@ -4373,8 +4382,31 @@ def handle_real_pending(sig: Dict[str, Any], close_now: float, p0: float) -> Non
         _resync_after_cancel_attempt(sig, ex, "انتهت صلاحية الأمر المعلق (3 شموع) دون ملء كامل")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# [EL2.4.1][F2] حالة حدود السعر منذ لحظة الحدث — ذاكرة العملية حصرًا:
+# المفتاح ("p", id) للأمر المعلق و("o", id) للصفقة المفتوحة، ويُمسح عند نهاية دورة الحياة.
+_EXT_STATE: Dict[Tuple[str, int], Dict[str, float]] = {}
+
+
+def _iso_epoch(s: Any) -> float:
+    """[EL2.4.1][F2] 'YYYY-MM-DDTHH:MM:SS...' (أول 19 حرفًا، UTC) → epoch ثوانٍ؛
+    0.0 عند الفشل ⇒ سلوك قديم (fail-open مع الاختبارات والصفوف القديمة)."""
+    try:
+        return datetime.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ext_forget(row_id: Any) -> None:
+    """[EL2.4.1][F2] مسح حالة الحدود عند نهاية دورة حياة الصف (إغلاق/إلغاء/انتهاء/تحول لملء)."""
+    _EXT_STATE.pop(("p", row_id), None)
+    _EXT_STATE.pop(("o", row_id), None)
+
+
 def monitor_step() -> None:
     """نفّذ أوامر الإغلاق/الملء الورقية — كل 60 ثانية على شموع فريم التنفيذ (15m)."""
+    from strategies import indicators as _ext_ind  # [EL2.4.1][F2] أعلى الدالة — لا اعتماد على مرور المعلق
     pend = db.query("SELECT * FROM signals WHERE status='pending' AND strategy_name='Elliott_Fibonacci' ORDER BY id ASC")  # [EL2.0.0] عزل — صفوف السكالب يملكها مديرها
     for sig in pend:
         symbol = sig["symbol"]
@@ -4388,6 +4420,16 @@ def monitor_step() -> None:
         last = df.iloc[-1]
         close_now = float(last["close"])
         p0 = float(json.loads(sig["pivots_json"])["P0"])
+        # [EL2.4.1][F2] الحدود منذ ولادة الأمر: حدّا الشمعة لا يُقبلان إن فُتحت قبل الأمر
+        _live_p = get_live_price(symbol)
+        if _live_p is None:
+            _live_p = close_now
+        _pk = ("p", sig["id"])
+        _st = _ext_ind.merge_extremes(_EXT_STATE.get(_pk), _iso_epoch(sig.get("created_at")),
+                                      _live_p, _ext_ind.candle_open_epoch(last),
+                                      float(last["high"]), float(last["low"]))
+        _EXT_STATE[_pk] = _st
+        low_now = _st["lo"]
 
         # [FE1.4.0] الأمر الحقيقي يُدار من المنصة مباشرة (حقيقة الملء من باينانس)
         if sig.get("is_real"):
@@ -4399,6 +4441,7 @@ def monitor_step() -> None:
             _why = f"إبطال بنيوي: إغلاق {fmt_price(close_now)} خلف أصل الموجة 1 (P0={fmt_price(p0)})"
             db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s WHERE id=%s",
                        (_why, utc_now_iso(), sig["id"]))
+            _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة
             # [FE1.9.6] الإبطال البنيوي حدث دورة حياة يراه المستخدم — إشعار مثل الملء
             log_and_notify("info", f"🛑 أُبطل الأمر المعلق بنيويًا: {symbol} — {_why}", "PENDING_LIFECYCLE")
             continue
@@ -4407,6 +4450,7 @@ def monitor_step() -> None:
         if sig.get("expires_at") and utc_now_iso() > sig["expires_at"]:
             db.execute("UPDATE signals SET status='expired', close_reason=%s, closed_at=%s WHERE id=%s",
                        ("انتهت صلاحية الأمر المعلق (3 شموع) دون لمس منطقة الدخول", utc_now_iso(), sig["id"]))
+            _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة
             # [FE1.9.6] بلاغ حي: إشارة انتهت واختفت من اللوحة بصمت أربكت المراقب —
             # إشعار مثل الملء: دورة حياة المعلق (ولادة/ملء/انتهاء/إبطال) كلها مرئية
             log_and_notify("info",
@@ -4419,23 +4463,31 @@ def monitor_step() -> None:
         # [EL2.4.1][F1] الأمر المحدد يُملأ بسعره أو بسعر فتح الشمعة عند فجوة هبوط تحته —
         # لا بسعر الإغلاق (كان يُملأ تحت الوقف المقصوص ثم يُغلق بالوقف الأعلى = ربح وهمي)
         entry = float(sig["entry_price"])
-        low_now = float(last["low"])
         if low_now <= entry:
             try:
                 open_now = float(last["open"])
             except (KeyError, TypeError, ValueError):
-                open_now = entry
-            fill_price = min(entry, open_now)   # فجوة هبوط تحت الأمر = ملء بالفتح (أفضل سعر ممكن)
+                open_now = None
+            # [EL2.4.1][F2] سعر الفتح يُقبل فقط إن فُتحت الشمعة بعد إنشاء الأمر (بتساهل 15ث) —
+            # فتح شمعة أقدم من الأمر لا يعني فجوة ملء حقيقية
+            _c_open = _ext_ind.candle_open_epoch(last)
+            _created = _iso_epoch(sig.get("created_at"))
+            if open_now is not None and _c_open is not None and _created and \
+                    _c_open < _created - 15.0:
+                open_now = None
+            fill_price = min(entry, open_now) if open_now is not None else entry
             # [EL2.4.1][F1] فجوة تحت الوقف: تُفتح الصفقة وتُغلق فورًا بسعر الملء — لا انتظار شمعة تالية
             if fill_price <= float(sig["stop_loss"]):
                 db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
                            (fill_price, utc_now_iso(), float(sig["quantity"]), sig["id"]))
+                _ext_forget(sig["id"])   # [EL2.4.1][F2] المعلق تحوّل لصفقة مغلقة
                 row_gap = db.query("SELECT * FROM signals WHERE id=%s", (sig["id"],), one=True)
                 if row_gap:
                     close_signal_row(row_gap, fill_price, "وقف خسارة بنيوي (فجوة تحت الوقف)")
                 continue
             db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
                        (fill_price, utc_now_iso(), float(sig["quantity"]), sig["id"]))  # [FE1.8.0] أساس محاسبة الجزئي
+            _ext_forget(sig["id"])   # [EL2.4.1][F2] المعلق تحوّل لمفتوح — حالة جديدة بذر صافٍ
             log_and_notify("info",
                            f"🎯 مُلئ الأمر المعلق (ورقي): {symbol} عند {fmt_price(fill_price)}\n"
                            f"وقف: {fmt_price(sig['stop_loss'])} | هدف 1.618: {fmt_price(sig['take_profit'])}",
@@ -4455,7 +4507,19 @@ def monitor_step() -> None:
             continue
         _open_outage_step(symbol, False)      # [FE1.7.0] نجاح — صفّر عداد الانقطاع
         last = df.iloc[-1]
-        high_now, low_now = float(last["high"]), float(last["low"])
+        # [EL2.4.1][F2] الحدود منذ لحظة الملء/آخر تسليح — حدّا الشمعة لا يُحسبان إن فُتحت قبل الحدث
+        _live_o = get_live_price(symbol)
+        if _live_o is None:
+            _live_o = float(last["close"])
+        _meta0 = _sig_meta(sig)
+        _since_o = max(_iso_epoch(sig.get("filled_at")), float(_meta0.get("armed_at") or 0.0))
+        _ok = ("o", sig["id"])
+        _st = _ext_ind.merge_extremes(_EXT_STATE.get(_ok), _since_o, _live_o,
+                                      _ext_ind.candle_open_epoch(last),
+                                      float(last["high"]), float(last["low"]))
+        _EXT_STATE[_ok] = _st
+        high_now, low_now = (_st["hi"] if _st["hi"] is not None else _live_o,
+                             _st["lo"] if _st["lo"] is not None else _live_o)
         # تتبع القمة لعرضه في اللوحة
         peak = max(float(sig.get("peak_price") or sig["fill_price"]), high_now)
         if abs(peak - float(sig.get("peak_price") or 0)) > 1e-12:
