@@ -2449,6 +2449,9 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
             qty = amount_prec(symbol, qty_min)
             if qty <= 0:
                 qty = math.floor(qty_min * 1e6) / 1e6
+            # [EL2.4.1][F8] القيمة الاسمية تُحدَّث بعد رفع الكمية — وإلا بقي فرع «رفع
+            # لأدنى قيمة» ميتًا: الفحوص اللاحقة ترفض دائمًا بقيمة قديمة أقل من الحد
+            notional = qty * entry
         else:
             logger.info("[%s] رفض الحجم: مسافة الوقف واسعة جدًا لأدنى حجم (%.2f USDT مخاطرة)", symbol, qty_min * risk_per_coin)
             return None

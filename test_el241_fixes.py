@@ -703,3 +703,19 @@ class TestF7ClosedCandlesDetection:
         monkeypatch.setattr(vnz, "DETECT_CLOSED_ONLY", False)
         vnz.initialize_bot_services()
         assert "momentum-kicker" in started
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F8 — حجم الصفقة عند رفع الحد الأدنى (P2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF8MinNotionalRaise:
+    def test_qty_raised_to_min_notional_survives(self, clean_db, tg_off):
+        """رصيد 100 / دخول 5 / وقف 4 ⇒ الكمية تُرفع لأدنى قيمة (2.0) ولا تُرفض."""
+        vnz.set_paper_balance(100.0)
+        try:
+            qty = vnz.compute_quantity("TEST/USDT", 5.0, 4.0)
+            assert qty is not None, "فرع رفع الحد الأدنى يجب أن يعمل لا أن يُرفض دائمًا"
+            assert math.isclose(qty, 2.0, rel_tol=1e-9)
+        finally:
+            vnz.set_paper_balance(10000.0)
