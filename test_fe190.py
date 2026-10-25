@@ -237,7 +237,7 @@ def test_scan_alive_premise_deep_retrace_blocks(clean_db, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_and_env_knobs():
-    assert vnz.BOT_VERSION == "EL2.4.0"
+    assert vnz.BOT_VERSION == "EL2.4.1"
     assert vnz.MOMENTUM_LOOP_SEC > 0
     assert vnz.KICK_MIN_GAP_SEC >= 5.0
     assert 0.5 <= vnz.DEEP_RETRACE_BLOCK_PCT <= 0.95  # حد معقول افتراضيًا 0.786

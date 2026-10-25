@@ -150,10 +150,10 @@ def test_indicator_file_is_pure_visualization():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_sync(clean_db):
-    assert vnz.BOT_VERSION == "EL2.4.0"
-    assert panel.BOT_VERSION == "EL2.4.0"
+    assert vnz.BOT_VERSION == "EL2.4.1"
+    assert panel.BOT_VERSION == "EL2.4.1"
     body = client().get("/health").get_json()
-    assert body["version"] == "EL2.4.0"
+    assert body["version"] == "EL2.4.1"
 
 
 def test_dashboard_serves_updated_html(clean_db):
