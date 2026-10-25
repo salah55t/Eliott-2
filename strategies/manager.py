@@ -455,6 +455,19 @@ def _open_position(sig: ScalpSignal, fill_price: Optional[float] = None) -> bool
         if not qty:
             _reject(sig.strategy, why)
             return False
+        # [EL2.4.2] الورقي يحاكي قواعد باينانس: أرضية الكمية على خطوة LOT_SIZE —
+        # ونزول الكمية بعد الأرضية دون أدنى قيمة = رفض كما تفعل المنصة
+        floor_fn = HOST.get("paper_floor_qty")
+        if floor_fn:
+            q2 = floor_fn(sig.symbol, qty)
+            if not q2 or q2 <= 0:
+                _reject(sig.strategy, "كمية دون حدود باينانس (minQty/LOT_SIZE)")
+                return False
+            qty = q2
+            notional = qty * fill
+            if notional < cfg.min_notional:
+                _reject(sig.strategy, "قيمة صفقة بعد أرضية LOT_SIZE دون الحد الأدنى")
+                return False
 
     meta = dict(sig.meta)
     meta.update({"fill": fill, "partial_done": False, "be_done": False,

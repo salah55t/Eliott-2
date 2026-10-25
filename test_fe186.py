@@ -161,5 +161,5 @@ class TestVersion:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.4.1"
-        assert panel.BOT_VERSION == "EL2.4.1"
+        assert vnz.BOT_VERSION == "EL2.4.2"
+        assert panel.BOT_VERSION == "EL2.4.2"

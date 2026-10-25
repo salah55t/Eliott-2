@@ -221,7 +221,15 @@ from utils.logger import get_logger, fmt_price
 #   (كاش 45ث وسقف إدخالات — درس SWR من flowmap)، نافذة إعدادات، أداء لكل استراتيجية، دونات WR، عدّادات متحركة، أعمدة إغلاقات مكدسة.
 #   (سطر الإصدار التاريخي أدناه يحفظ وصف EL2.0.0 الكامل كما هو.)
 # [سجل تاريخي] EL2.0.0 «Eliott+2 — الاستراتيجيات المتوازية»: طلب المستخدم «ابتكار 2 استراتيجيات سكالبينڨ للسبوت في باينانس تعمل بالتوازي مع استراتيجية موجات اليوت ورفع المشروع في مستودع منفصل Eliott+2» — استراتيجيتان جديدتان تعملان جنبًا إلى جنب مع محرك الموجات في نفس العملية وعلى نفس رأس المال: (S1) SCALP_FLOW «انجلال التدفق»: زخم انضباطي على 5m يدخل مع اندلاع دلتا المشترين CVD لأعلى مستوى في 36 شمعة (الدلتا من حقل «حجم المشتري بالتاكير» في شموع باينانس الخام — الحقيقة لا التلفيق، ووضع proxy صادق عند غيابها عبر مزودي البديل) المؤكدة بـ SuperTrend(10,2.5) على 5m + تأكيد 15m(10,3.0) أو ADX≥22، وحجم 1.3× المتوسط، وموقع سليم فوق VWAP وفوق POC وبلا امتداد زائد عن EMA20 — وقف ATR مضبوط بآخر قاع مؤكد (0.55–1.4×ATR)، هدف 1 عند 1.1×ATR (جزئي 50% + BE) وهدف 2 عند أقرب جدار بيع من دفتر الأوامر (فكرة Liquidity Radar من OrderFlowMap) أو 2.2×ATR، وخروج مبكر عند انقلاب الدلتا مع كسر SuperTrend. (S2) SCALP_PROFILE «ارتداد القيمة»: Volume Profile من آخر 72 شمعة 5m (توزيع حجم التسعير على 48 صندوقًا — POC/VAH/VAL بمنطقة قيمة 70% كما في لوحات OrderFlow) يدخل عند رمشة سيولة تحت VAL بإغلاق داخل القيمة مع امتصاص CVD (قاع سعري جديد بلا قاع دلتا جديد) ودرع ضد الترند القوي (رفض SuperTrend هابط مع ADX≥28/30)، وقف تحت الرمشة، الهدف POC ثم VAH، وخروج عند انهيار البنية، مع تقارب اختياري مع مفاتيح فيبو المحرك 0.618/0.786 (زيجزاج المحرك ذاته يرفع الدرجة لا يمنع). الإدارة المشتركة: فتح فوري بسعر حي (ملء صادق) وجزئي 50% عند TP1 + نقل الوقف لنقطة الدخول BE (نفس عقائد الحماية المحمية FE1.8.0)، وقف-أولًا intrabar كل 20ث، مهلة صفقة 90د، تبريد رمز 45د، سقف صفقات مفتوحة 2، قاطع خسارة يومي 0.6% لكل استراتيجية، حجم بمخاطرة 0.75% مقيد بسقف قيمة صارم (درس FE1.7.0 ضد الرافعة الضمنية)، سبوت فقط LONG (حارس صريح لا بيع مكشوف)، احترام زر التداول وقاطع مخاطر المحرك وحظر الرمز المشغول، عزل حرفي: استعلامات monitor_step وreconcile_live_targets ترى Elliott_Fibonacci وحده فدورة حياة السكالب يملكها مديرها حصرًا، والبقاء المشترك (symbol_has_active/active_trade_count/active_paper_notional) يعبر الاستراتيجيات الثلاث فلا ازدواج على الرمز ولا انفجار تعرض. التكامل: جسر حقن كامل (الحزمة لا تستورد vnz أبدًا — تلافي إعادة تنفيذ __main__)، شموع خام كاملة عبر publicGetKlines خلف حارس الوزن مع انسحاب صادق إلى proxy، لقطة دفتر أوامر بوزن 1 لكل رمز/دورة، إشعارات تلغرام بأنواع SCALP_OPEN/SCALP_PARTIAL/SCALP_CLOSE عبر البوابة، نقطة /api/scalp محمية + كتلة scalp في /health و/api/all، وقسم في اللوحة يعرض بطاقات الاستراتيجيتين مع شارات على الصفوف. الحقيقي: شراء سوق quoteOrderQty خلف REAL_MAX_NOTIONAL_USDT + وقف راكن STOP_LOSS_LIMIT يعيش على المنصة (فلسفة FE1.8.0) وترقية الوقف عند BE. (FE1.9.13 «اللمسة الفنية»: إعادة تشطيب بصري كامل للوحة التحكم بأسلوب Neo-Glass Terminal — طلب المستخدم «اقتبس من مشاريع التصاميم لتحسين تصميم لوحة التحكم وجعلها أكثر حيوية وحداثة واضف عناصر متحركة مع مراجعة تفننية حتى 4 مرات دون المساس بمنطق الاستراتيجية»: شفق قطبي طافٍ ونجوم متلألئة وفينييت سينمائي خلف الشبكة، شعار يطفو وعنوان بتدرج منساب بخط كوفي عربي، بطاقات زجاجية بلمعان قُطري ودخول طافٍ، حد شعاعي دوّار حول الشارت، وميض القيم عند تغيّرها (MutationObserver عرضي لا يقرأ ولا يعدّل أي بيانات)، أشرطة تقدم بلمعان مستمر، نقطة حيوية بحلقة نبض، صفوف جداول بتدرج تحويم، حبوب حالات زجاجية، أزرار بلمعان يمسحها، أشرطة تمرير نيون، توست يطفو، حالات فراغ تتنفس، وإتاحة prefers-reduced-motion — كل ذلك CSS خالص صفر مكتبات صفر CDN إضافي (حمية 512MB سليمة) وبنفس كل الأصناف والمعرفات والدوال القديمة، والتحقق بلقطات متصفح حية و4 جولات تفنن واختبار الحزمة الكاملة. (FE1.9.12 «موجات المحرك — المؤشر يحسب بمنطق الاستراتيجية حرفيًا»: طلب المستخدم «اضبط عدادات المؤشر ومستويات فيبوناتشي كما هي في الاستراتيجية» ثم «اريد ان يحسب مؤشر موجات اليوت وفيبوناتشي كما في استراتيجية التداول» — بدل مؤشر بمنطق LuxAlgo الافتراضي (زيجزاج pivothigh أطوال 4/8/16 وفيبو 0.5–0.854) صارت لوحة الموجات تُحسب من محرك الاستراتيجية نفسه عبر نقطة /api/ew_strategy: الكاشف ذاته PivotDetector بنسخة إعداد مطابقة حرفيًا (dc_replace(detector.cfg) — عتبة الانعكاس DEVIATION_THRESHOLD ومصدر الإغلاق وأرضية التناسب) يعمل على شموع الكاش ذاتها التي يغذي بها الشارت (كاش Postgres + الشمعة الجارية — صفر طلبات مزودين)، يعطي زيجزاج الاستراتيجية كاملًا (محاور مؤكدة بنسبة انعكاس لا أطوال ثابتة) والبنى P0–P5 المُحقَّقة بقواعد wave_validator الثلاث + أرضية التناسب، واختيار «البنية الأفضل» بنفس select_best_setup وترتيب FE1.9.2 (التقادم قبل الاختيار)، وتسلسل كامل: أطوال الأمواج وتراجعا W2/W4 مع حالتيهما المنطقيتين وحكم القواعد مسمّى، ومنطقة الدخول (P3−0.382×W3 / حد أعلى 0.236) والوقف البنيوي P0−0.1% وخط الإبطال P0، وسلّم الأهداف بنفس صيغ create_pending_signal (W5=W1 / 0.618×W3 / 1.618×W1 من P2) مقصوصًا على قمة الأسبوع عبر build_staged_targets بمراحله TP1→TP3 وفجوتها 0.2R، إضافة طبقات فيبو الكانونية التي تفحصها الاستراتيجية فعليًا (مفاتيح W2: 0.382/0.5/0.618 على الموجة 1، مفاتيح W4: 0.236/0.382 على الموجة 3، امتدادات W3: 1.618/2.618 من P2). اللوحة: زر «موجات المحرك (الاستراتيجية)» يرسم زيجزاج المحرك (خط عنبري) وشارات 0–5 على المحاور وخطوط الاستراتيجية كلها فوق الشموع مع سطر حكم عربي (الصلاحية/القواعد/التراجعات/العمر/الأهداف) — وبإمكان المستخدم إبقاء طبقة LuxAlgo الموازية أو إيقافها (تُقيَّد إضافة عرض فقط؛ صفر تغيير على منطق التداول أو الكاشف المشترك: النسخة للعرض مستقلة وعزول عن حالة الكاشف الحي). (FE1.9.11 «موجات إليوت (LuxAlgo) على الشارت»: طلب المستخدم «هل يمكنك تطبيق هذا المؤشر على الشارت» مع لصق كود مؤشر Elliott Wave [LuxAlgo] (Pine v5) كاملًا — نقله حرفيًا إلى static/elliott-wave.js يُقدَّم من /ew.js (بنمط /lwc.js: من المستودع بلا CDN خارجي، بحماية اللوحة نفسها، رأس الملف وتذييل اللوحة يحملان الإسناد © LuxAlgo وترخيص CC BY-NC-SA 4.0). الخوارزمية بشمعة-بشمعة كما ينفذها Pine: زيجزاج بثلاثة أطوال (4/8/16) من محاور pivothigh/pivotlow المؤكدة (يمين=1، صرامة تامة) يدير مكدس نقاط بدلالاته الحرفية (دفع عند انعكاس الاتجاه، استبدال عند تجاوز القمة/القاع)، كشف الدافع 12345 بقواعد LuxAlgo (W3 ليست الأقصر + عدم التداخل)، كشف التصحيح ABC بحدود 0.854 من مدى الدافع مع بناء (a)(b)(c) عند قمة/قاع (c) وصندوقه وتمديد (c)، إبطال الدافع بالتنقيط والتصحيح بالشرط مع إخفاء شاراتهما، دمج '(5) (1)' و'(b) (1)'/'(c) (2)' عند التطابق، خطوط فيبو 0.5/0.618/0.764/0.854 من نهاية الموجة 5 للنمط الأخير السليم فقط (تُلغى فوق تصحيح مكتمل وتنقّط عند كسر 0.854)، دائرة «بداية موجة جديدة محتملة» وعلامة ✕ عند كسر صندوق التصحيح. العرض في اللوحة: الأطوال الثلاثة بألوان LuxAlgo (أحمر/أزرق/أبيض) كطبقة LineSeries رقيقة فوق الشموع + شارات على مثيل createSeriesMarkers مستقل لا يمس علامات الملء/الغلق، إعادة بناء بتوقيع (رمز|فريم|عدد|آخر شمعة) لا عند كل نبضة، زر تشغيل/إيقاف وملخص عربي لحالة كل طول — الحساب كله في متصفح المستخدم: صفر حمل على الخادم وصفر طلبات جديدة (نفس شموع /api/klines). تحقق: 35/35 اختبار node (دافع صاعد/هابط بقيم فيبو دقيقة، ABC مع إخفاء الفيبو، اتجاه أحادي، حواف) + pytest للتقديم والحماية واللوحة. صفر تغيير تداولي. (FE1.9.10 «الشارت الحي»: دمج مكتبة TradingView Lightweight Charts v5.2.1 (Apache-2.0 — مُبنيّة محليًا في static/ وصفر اعتماد خارجي) في اللوحة — شارت شموع فريم التنفيذ يُغذى من كاش Postgres الدائم (صفر طلبات للمزودين — الكاش يُكتب أصلًا كل دورة مسح) + الشمعة الجارية الحية من مخزن ويب سوكت، مع خطوط مرجعية مرسومة على الشموع: منطقة الدخول (سماوي) · الوقف البنيوي (أحمر) · الأهداف المتدرجة TP1→TP3 (أخضر) · سقف الأسبوع (برتقالي متقطع) — بلاغ «الأهداف البعيدة» صار مرئيًا بصريًا فورًا: يرى المستخدم الهدف يقص على قمة 7 أيام بعينه. نقطة /api/klines (بحماية اللوحة نفسها: tf ضمن ALLOWED_TFS، حد 30..OHLCV_LIMIT، دمج الشمعة الجارية من _ws_candles حصرًا لفريم التنفيذ دون لمس منطق المحرك) و/lwc.js لتقديم ملف المكتبة بترويسة تخزين يومية. صفر تغيير تداولي. (FE1.9.9 «أهداف سكالبينج واقعية متدرجة» — علاج بلاغ حي: «البوت يضع أهدافًا بعيدة لم تصلها العملة منذ أكثر من شهر» والبوت مصمم للسبوت سكالبينج. (1) سقف الأسبوع TP_WEEK_CAP: قمة آخر 7 أيام (شموع يومية عبر سلسلة المزودين + كاش 30د) هي أقصى ما يلمسه أي هدف — كل درجات سلّم FE1.6.0 تُقص على السقف، وما بقي تحت الدخول أو تحت أرضية R:R الصافي يُهدر، وإن سقط الجميع رُفضت الإشارة بعداد rejected_weekly_cap وسبب مسمّى في اللوحة؛ فشل جلب القمة = fail-open بالسلوك القديم (بلا سقف بلا ادّعاء). (2) أهداف متدرجة TP1→TP3: الدرجات المؤهلة الباقية تحت السقف تصير مراحل جني (tp1/tp2/tp3 أعمدة DB + عرض اللوحة + رسالة التلغرام)، عند لمس هدف وسيط تُغلق TP_STAGE_SLICE_PCT% من الكمية المتبقية بنفس عقيدة الجزئي FE1.8.0 (ورقي: محاسبة، حقيقي: بيع سوق + محاسبة، غبار = يُعتبر منجزًا ويركب)، والهدف الأخير (take_profit = tp3) يغلق الباقي في المسار القديم حرفيًا. (3) تسوية الأهداف الحية reconcile_live_targets: كل صفقة معلقة/مفتوحة هدفها فوق قمة الأسبوع تُقص للسقف مع بلاغ TARGET_FIX مرة واحدة لكل صفقة (نافذة الأسبوع تتدحرج → إعادة قص صامتة بسجل) — علاج مباشر للصفقات المفتوحة الحالية بأهدافها الشهرية البعيدة. صفر تغيير في الملء/الوقف/الإبطال/الصلاحية. (FE1.9.8 «التحكم والصمود» — ناتج بحث المشاريع مفتوحة المصدر (freqtrade/hummingbot/jesse/cryptofeed/OctoBot) وتحليل الفجوات مع مشروعنا: (1) التحكم عن بعد من تلغرام (الميزة القاتلة في freqtrade): خيط getUpdates long-poll بأوامر /status /pending /positions /stats /close /cancel /pause /resume /ping /help (عربية وإنجليزية مع اسم البوت الملحق) — أوامر التنفيذ تستخدم نفس مسارات اللوحة حرفيًا (close_signal_row/close_real_trade/set_trading_enabled) فلا منطق مزدوج، والمحادثة المصرّحة وحدها، وTELEGRAM_CONTROL=0 يعطل؛ (2) تنبيه «غلق يدوي مطلوب» (الطلب الحي): كل مسارات فشل الغلق الحقيقي (مفاتيح غائبة/تعذر إلغاء الوقف الراكن/فشل أمر البيع/استثناء) ترفع علم manual_close_required على الصفقة عبر meta_json + تنبيه 🚨 بارز يسمّي الرمز والكمية ومستوى الخروج مع إرشاد /close، تذكير كل MANUAL_CLOSE_REMIND_SEC، ويُمسح تلقائيًا عند أول إغلاق ناجح مع إشعار حلّ؛ (3) بوابة تلغرام ضد الضجيج (الطلب الحي): log_and_notify يفلتر الإرسال عبر telegram_gate — الأصناف المهمة وحدها تصل المحادثة (إشارة جديدة/ملء/إغلاق/جزئي/دورة المعلق/غلق يدوي/أخطاء التنفيذ/تغييرات الوضع/قاطع المخاطر/انقطاع البيانات/إقلاع) والضجيج (تدوير المزودين/ماسح الكون/فحص الخمول/BE) يبقى في السجل واللوحة، + كتم التكرار الحرفي TELEGRAM_DEDUP_SEC (حلقة إعادة المحاولة كانت ترسل الخطأ نفسه كل 60ث) + قصّ آمن عند 4000 حرف؛ (4) كاش الشموع الدائم + الوضع المتدهور (فلسفة cryptofeed/cryptostore): جدول kline_cache في Postgres يكتب الشموع المغلقة حصرًا (الجديدة وحدها بعد البذرة) وعند فشل كل المزودين يخدم الكاش بوضع متدهور معلن مرة واحدة — المسح والمتابعة والغلق لا يتوقفون أبدًا ما دامت Postgres حية، /health يكشف telegram_control وkline_cache. الصفر تغيير في منطق التداول نفسه. (FE1.9.7 «تيك خام»: طلب «جلب الأسعار ويب سوكت لحظية لأقصى درجة ممكنة» — طبقة تيار باينانس الخام فوق ccxt.pro (لا تغيير فيها — تبقى احتياطًا حيًا): (1) @trade لكل قائمة الكشف — سعر على كل صفقة فعلية منفذة (أجزاء الثانية، نفس دلالة «آخر سعر» في واجهة باينانس) بدل ~1ث؛ (2) @kline_<فريم التنفيذ> لرموز الصفقات النشطة — الشمعة الجارية تتحدث داخل الشريط فيتحقق الملء من أرضية حية أدق؛ (3) استيقاظ فوري لحلقة المراقبة (60ث ← لحظي) عند لمس تيك لمستوى تنفيذ: معلق ← تيك ≤ الدخول، مفتوح ← تيك ≤ الوقف أو ≥ الهدف — نفس monitor_step حرفيًا فقط الاستدعاء لحظي، والحلقة الستينية شبكة أمان؛ (4) نبض الحركة يفحص كل 2ث بدل 5 (بلا REST — قراءة ذاكرة)؛ (5) شارة «تيك خام ⚡⚡» بعداد التيك وعمر آخر رسالة في اللوحة + كتلة raw في /api/ws/status. تيار مدمج واحد (30+ تيار < سقف 1024، صفر وزن REST)، إعادة اتصال دائمة بتراجع + رقيب يعيد البناء عند تغيّر المجموعة، RAW_TICK_WS=0 يعطل مع تساهل كامل. (FE1.9.6 «لا اختفاء صامت»: بلاغ حي (18:44 UTC 15 أكتوبر) — «السعر وصل الدخول في باينانس واللوحة لم تتغير» — التحقيق أثبت عكس البلاغ (اللوحة حية طابقت باينانس حرفيًا 0.00456500، والمنطقة لم تُلمس: أدنى قاع 0.0045230 فوق قمتها 0.06%) لكن كشف فجوة عرض حقيقية: الإشارة المعلقة عند انتهاء صلاحيتها (expired) أو إبطالها البنيوي (cancelled) تختفي من اللوحة بصمت لأن /api/all كان يعرض المغلق فقط (status='closed' = صفقة تداولت وغلقت بنتيجة). الإصلاح: (1) قسم «المغلق» يعرض المنتهية والملغاة أيضًا بشارات مميزة (منتهية/ملغاة) مع سعر الدخول المرجعي؛ (2) انتهاء الصلاحية والإبطال البنيوي يطلقان إشعارًا في اللوحة/تلجرام (مثل الملء) — دورة حياة المعلق مرئية كاملة: وُلد → مُلئ أو انتهى أو أُبطل. صفر تغيير سلوك تداولي: شروط الملء/الإبطال/الصلاحية كما هي حرفيًا. (FE1.9.5 «الإقلاع مرئي»: /health يكشف boot_at وuptime_sec — إعادة تشغيل العملية (مثل الحادثة 14:59:44 بعد نشر FE1.9.4 — كل started_at والعدادات تصفرت) تُرى فورًا من نبضة واحدة بدل استدلال عكسي من started_at للاشتراكات. صفر تغيير سلوك. (FE1.9.4 «حكم يسمّي قاتله»: سجلات wave_validator تُقرأ بلا ترجم — (1) سطر الحكم النهائي يعدّد القواعد الفاشلة («INVALID — فشل: Rule-1, Rule-3») بدل عدّاد مجرد؛ (2) رفض Rule-2 يسمّي الشرط القاتل صراحة (أقصر الأمواج؟ أم عدم كسر نهاية W1؟) — القاعدة مركّبة من الشرطين والحالة الملتبسة W3_not_shortest=True مع FAIL كانت تحيّر قارئ السجلات؛ (3) سطر «Starting impulse validation» نزل DEBUG — تشويش بلا معلومة. صفر تغيير سلوك: كل القرارات كما هي حرفيًا. (FE1.9.3 «تصنيف صادق»: رفض «لا هدف يحقق أرضية R:R» بدل «أسعار غير منطقية» — إثبات حي PUMP في حزام إعادة التشغيل (replay harness أول مرة: مسار الإنتاج الحرفي كشفًا وبوابات وإنشاء أمر معلق على بيانات حقيقية وُلّدت فيه 30 حدث أمر معلق عبر 5 رموز في 4 أيام) — سلّم الأهداف بلا درجة تحقق TP_MIN_RR وأساس 1.618 تحت الدخول = هندسة بلا هدف مربح كفاية، عداد rejected_no_target جديد + عرضه في اللوحة، الرفض نفسه لم يتغير (صفر تغيير سلوك). (FE1.9.2 «كشف بلا عمى»: (1) إصلاح انكسار الزيجزاج على شريحة فارغة (انعكاس مؤكد على الشريط الأخير ثم محور ختامي بعده — STRK/BAT/RNDR كانت تتخطى بصمت كل دورة: argmin على تسلسل فارغ) — المحور الختامي على الشريط الأخير ذاته؛ (2) التقادم قبل الاختيار: القديمة الأجود إليوتيًا كانت تدفن الحديثة المتواضعة (المختار وحده تقيّمه البوابات)؛ (3) عداد scan_errors يجعل الكشف الأعمى الصامت مرئيًا). (FE1.9.1 «نبض حي»: إصلاح قاتل النبض — اشتراكات ويب سوكت كانت لرموز الصفقات النشطة وحدها (db signals pending/open) فصفر صفقات = صفر أسعار حية = نبض الحركة صامت للأبد (الإثبات الحي: momentum_kicks=0 بعد 76 دورة). الإصلاح: watchlist كلها تدخل بتيار سعر فقط (شموع تبقى لرموز الصفقات النشطة — حمية 512MB) + فشل قاعدة البيانات لا يعطل نبض القائمة — ws_wanted_sets نقية قابلة للاختبار + _ws_spawn(with_ohlcv). (FE1.9.0 «كشف لحظي» — إصلاح جذري لتأخر الكشف (204 بنية/55 فرضية ميتة): (1) نبض الحركة: خيط يراقب أسعار ويب سوكت ويوقظ الكشف فور تحرك أي رمز بعتبة الزيجزاج منذ آخر تقييم — البنية تُقيَّم خلال ثوانٍ من اكتمال توقيعها بدل حتى 15 دقيقة (صفر REST/وزن، فجوة 90ث، بلا أسعار = صمت)؛ (2) إعادة ترتيب تصنيفي: التقادم قبل الحيوية — «فرضية ميتة» تصير عداد تأخر حقيقي خالص والأثرية تُحسب تقادمًا؛ (3) بوابة التصحيح العميق 78.6%: رفض مبكر مصنّف بدل ولادة أمر زومبي يموت بأول شمعة. كلها env قابلة للضبط (MOMENTUM_LOOP_SEC/KICK_MIN_GAP_SEC/DEEP_RETRACE_BLOCK_PCT). (FE1.8.9: تبديل الفريم حيًا من اللوحة 5m/15m/1h/4h)
-BOT_VERSION = "EL2.4.1"
+# [EL2.4.2] «محاكاة قواعد باينانس للورقي + رصيد 100$»: طلب المستخدم «اجعل الرصيد الورقي 100 دولار واجعل العمليات تحاكي قواعد باينانس من حيث الكمية والبواقي بعد البيع» —
+#   (1) الكمية: حدود باينانس الحقيقية لكل رمز من exchangeInfo (نفس مصدر الحقيقي بكاش) — compute_quantity يستخدم minNotional/minQty لكل رمز بدل الثابت العام، وأرضية
+#   LOT_SIZE على كل كمية شراء ورقية (إليوت + سكالب عبر paper_floor_qty) مع رفض مسمّى عند النزول دون minQty (عداد rejected_binance_rules). (2) البواقي بعد البيع: كل بيع
+#   ورقي (إغلاق كامل/رجل جزئية/مراحل) يمر على _paper_sell_split: أرضية stepSize ثم فحص minQty وminNotional — ما رفض باينانس بيعه (بقايا/غبار) يبقى أصلًا في المحفظة
+#   ويُقيَّم بسعر الخروج بلا رسوم بيع (البيع لم يقع) ويُضاف للرصيد عند الإغلاق — عدّادا paper_dust_n/paper_dust_usdt وبلاغ 🧹 في رسالة الغلق، لا غبار صامت. غبار كامل
+#   (لا بيع ممكن أصلًا): تقييم كامل الكمية بسعر الخروج ورسوم الشراء فقط. الصيغة تعادل القديمة حرفيًا عند بلا قواعد أو كمية مطابقة (regression-safe) والصفوف الحقيقية
+#   لم تُمس. (3) الرصيد الورقي 100$ (PAPER_BALANCE في render.yaml) مع إعادة ضبط لمرة واحدة عند الإقلاع (_reset_paper_100 بعلم paper_reset_100_el242): إلغاء المعلق
+#   الورقي وتسوية المفتوح عند سعر دخوله بلا ربح/خسارة (حد محاسبي لحدود المحاكاة لا صفقة — قواطع المخاطر لا تُغذى) والصفوف الحقيقية لا تُمس.
+BOT_VERSION = "EL2.4.2"
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -252,6 +260,7 @@ RISK_PCT_PER_TRADE = float(os.getenv("RISK_PCT_PER_TRADE", "1.0"))
 PENDING_MAX_CANDLES = int(os.getenv("PENDING_MAX_CANDLES", "10"))  # [EL2.4.0] 10 شموع (2.5س على 15m) — درس الباك تاست E7/E8: الصلاحية الأطول رفعت الامتلاء 31%→37% بلا إفساد الجودة
 ELLIOTT_SL_CAP_ATR = float(os.getenv("ELLIOTT_SL_CAP_ATR", "2.0"))  # [EL2.4.0] سقف المخاطرة البنيوية ×ATR15 — درس E7: تضييق R ضاعف PF 1.41→1.62 وقصّ الذيل (-103$→-46$). 0 = معطل
 PAPER_BALANCE_START = float(os.getenv("PAPER_BALANCE", "10000.0"))
+PAPER_RESET_100_KEY = "paper_reset_100_el242"   # [EL2.4.2] علم إعادة الضبط لمرة واحدة
 FEE_RATE = float(os.getenv("FEE_RATE", "0.001"))          # 0.1% تيكر لكل اتجاه
 INTER_SYMBOL_SLEEP = float(os.getenv("INTER_SYMBOL_SLEEP", "1.0"))
 MIN_NOTIONAL_USDT = float(os.getenv("MIN_NOTIONAL_USDT", "10.0"))
@@ -533,6 +542,9 @@ scan_stats: Dict[str, Any] = {
     "rejected_cooldown": 0,       # [FE1.7.0] تبريد الرمز بعد انتهاء/إلغاء حديث
     "rejected_cluster": 0,        # [FE1.7.0] سقف العنقود الاتجاهي
     "rejected_exposure_cap": 0,   # [FE1.7.0] سقوف التعرض الورقي (مركز/إجمالي)
+    "rejected_binance_rules": 0,  # [EL2.4.2] رفض كمية دون حدود باينانس (minQty/LOT_SIZE)
+    "paper_dust_n": 0,            # [EL2.4.2] مرات بقايا بيع (غبار) — قواعد باينانس
+    "paper_dust_usdt": 0.0,       # [EL2.4.2] قيمة البقايا المقيّمة بسعر الخروج
     "rejected_rr_net": 0,         # [FE1.8.0] R:R صافي بعد الرسوم تحت الأرضية
     "rejected_weekly_cap": 0,     # [FE1.9.9] لا هدف واقعي تحت قمة آخر 7 أيام — سلّم كله فوق سقف الأسبوع بعد القص
     "targets_capped_live": 0,     # [FE1.9.9] صفقات حية قُصّ هدفها إلى سقف الأسبوع (تسوية)
@@ -2066,6 +2078,95 @@ def real_adjust_price(ex, symbol: str, price: float) -> float:
         return price
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# [EL2.4.2] محاكاة قواعد باينانس للورقي — الكمية والبواقي بعد البيع
+# نفس مصدر الحقيقي (real_market_rules: exchangeInfo?symbol= بكاش) — الورقي
+# يلتزم LOT_SIZE (stepSize/minQty) وMIN_NOTIONAL عند الشراء وعند كل بيع،
+# والبقايا التي يرفض باينانس بيعها (دون خطوة أو دون حدود) تبقى في المحفظة
+# وتُقيَّم بسعر الخروج عند الإغلاق — قيمة محفوظة لا تختفي.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _paper_rules(symbol: str) -> Dict[str, float]:
+    """قواعد باينانس للورقي: {step, min_qty, min_cost} — سقوط آمن على الثوابت
+    (بلا قواعد = بلا أرضية خطوة والحد الأدنى الثابت MIN_NOTIONAL_USDT) —
+    fail-open موثق كما في كل طبقات الشبكة."""
+    try:
+        r = real_market_rules(symbol) or {}
+        return {
+            "step": float(r.get("step") or 0.0),
+            "min_qty": float(r.get("min_qty") or 0.0),
+            "min_cost": float(r.get("min_cost") or 0.0) or MIN_NOTIONAL_USDT,
+        }
+    except Exception:
+        return {"step": 0.0, "min_qty": 0.0, "min_cost": MIN_NOTIONAL_USDT}
+
+
+def _paper_sell_split(symbol: str, qty: float, price: float) -> tuple:
+    """كمية البيع الورقي بقواعد باينانس: أرضية LOT_SIZE ثم فحص minQty وminNotional.
+    يعيد (sellable, residual): residual البقايا التي يرفض باينانس بيعها
+    (دون خطوة أو دون أدنى قيمة) وتبقى أصلًا في المحفظة."""
+    rules = _paper_rules(symbol)
+    q = float(qty)
+    step = rules["step"]
+    sellable = _floor_step(q, step) if step > 0 else q
+    if sellable > q:   # أمان نظري — الأرضية لا ترتفع
+        sellable = q
+    residual = max(q - sellable, 0.0)
+    if sellable > 0 and (sellable < rules["min_qty"] or sellable * float(price) < rules["min_cost"]):
+        return 0.0, q   # البيع كله دون حدود باينانس — لا أمر بيع ممكن
+    return sellable, residual
+
+
+def _paper_floor_qty(symbol: str, qty: float) -> float:
+    """أرضية كمية الشراء الورقي على خطوة باينانس — 0.0 إن نزلت دون minQty
+    (يرفض المنادي الطلب كما تفعل المنصة)."""
+    rules = _paper_rules(symbol)
+    step = rules["step"]
+    v = _floor_step(float(qty), step) if step > 0 else float(qty)
+    if v <= 0:
+        return 0.0 if step > 0 else float(qty)
+    if rules["min_qty"] > 0 and v < rules["min_qty"]:
+        return 0.0
+    return v
+
+
+def _reset_paper_100() -> None:
+    """[EL2.4.2] إعادة ضبط لمرة واحدة: الرصيد الورقي يبدأ من PAPER_BALANCE_START —
+    المعلق الورقي يُلغى والمفتوح يُسوّى عند سعر دخوله (لا ربح ولا خسارة — حد
+    محاسبي لحدود المحاكاة لا صفقة) حتى لا تبقى مراكز بحجم الرصيد القديم تعلق
+    سقوف التعرض الجديدة. الصفوف الحقيقية لا تُمس إطلاقًا."""
+    try:
+        if db_get_state(PAPER_RESET_100_KEY):
+            return
+        pend = db.query("SELECT id FROM signals WHERE status='pending' AND COALESCE(is_real,0)=0") or []
+        for r in pend:
+            db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s"
+                       " WHERE id=%s AND status='pending'",
+                       ("إعادة ضبط الرصيد الورقي (EL2.4.2): بداية جديدة برصيد 100$",
+                        utc_now_iso(), r["id"]))
+            _ext_forget(r["id"])
+        opn = db.query("SELECT id, fill_price, entry_price FROM signals"
+                       " WHERE status='open' AND COALESCE(is_real,0)=0") or []
+        for r in opn:
+            px = float(r.get("fill_price") or r.get("entry_price") or 0)
+            db.execute("UPDATE signals SET status='closed', close_price=%s, close_reason=%s,"
+                       " closed_at=%s, pnl_usdt=0, pnl_pct=0 WHERE id=%s AND status='open'",
+                       (px, "إعادة ضبط الرصيد الورقي (EL2.4.2): تسوية عند سعر الدخول — حد محاسبي لا صفقة",
+                        utc_now_iso(), r["id"]))
+            _ext_forget(r["id"])
+        set_paper_balance(PAPER_BALANCE_START)
+        db_set_state(PAPER_RESET_100_KEY, "1")
+        log_and_notify(
+            "warning",
+            f"♻️ إعادة ضبط الرصيد الورقي إلى {PAPER_BALANCE_START:.0f}$ (EL2.4.2) — "
+            f"أُلغي {len(pend)} معلقًا وسُوّي {len(opn)} مفتوحًا عند سعر الدخول بلا ربح/خسارة. "
+            f"الصفقات الجديدة تحاكي قواعد باينانس: أرضية LOT_SIZE + حدود MIN_NOTIONAL "
+            f"والبواقي تحت حدود البيع تبقى في المحفظة وتُقيَّم بسعر الخروج",
+            "PAPER_RESET")
+    except Exception as exc:
+        logger.warning("إعادة ضبط الرصيد الورقي فشلت (ستُعاد المحاولة عند الإقلاع القادم): %s", exc)
+
+
 def compute_quantity_real(symbol: str, entry: float, sl: float, free_usdt: float,
                           ex=None) -> Optional[float]:
     """حجم المركز الحقيقي: مخاطرة RISK_PCT_PER_TRADE من رصيد USDT الفعلي الحر
@@ -2246,6 +2347,7 @@ def scalp_host() -> Dict[str, Any]:
         "symbol_has_active": symbol_has_active,
         "get_paper_balance": get_paper_balance,
         "paper_exposure_remaining": paper_exposure_remaining,  # [EL2.4.1][F9] سقف التعرض المشترك
+        "paper_floor_qty": _paper_floor_qty,   # [EL2.4.2] أرضية الكمية على خطوة باينانس
         "fee_rate": FEE_RATE, "deviation_threshold": DEVIATION_THRESHOLD,
         "zigzag_pivots": zigzag_pivots,
         "close_signal_row": close_signal_row, "close_real_trade": close_real_trade,
@@ -2439,12 +2541,17 @@ def _atr15_recent(symbol: str) -> Optional[float]:
 
 
 def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
-    """حجم المركز على مسافة المخاطرة الحقيقية (1% من الرصيد الورقي)."""
+    """حجم المركز على مسافة المخاطرة الحقيقية (1% من الرصيد الورقي).
+    [EL2.4.2] حدود باينانس الحقيقية لكل رمز (exchangeInfo بكاش): minNotional
+    وminQty — بدل الثابت العام؛ بلا قواعد = الثوابت (fail-open موثق)."""
     balance = get_paper_balance()
     risk_amount = balance * (RISK_PCT_PER_TRADE / 100.0)
     risk_per_coin = abs(entry - sl)
     if risk_per_coin <= 0 or risk_amount <= 0:
         return None
+    rules = _paper_rules(symbol)
+    min_cost = rules["min_cost"] or MIN_NOTIONAL_USDT
+    min_qty = rules["min_qty"]
     qty_raw = risk_amount / risk_per_coin
     qty = amount_prec(symbol, qty_raw)
     if qty == qty_raw:
@@ -2453,9 +2560,9 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
     if qty <= 0:
         return None
     notional = qty * entry
-    if notional < MIN_NOTIONAL_USDT:
+    if notional < min_cost:
         # ورقي: اسمح بأدنى حجم تداول لكن ارفض إن تجاوزت المخاطرة 3× الميزانية المخططة
-        qty_min = MIN_NOTIONAL_USDT / entry
+        qty_min = min_cost / entry
         if qty_min * risk_per_coin <= risk_amount * 3.0:
             qty = amount_prec(symbol, qty_min)
             if qty <= 0:
@@ -2466,6 +2573,12 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
         else:
             logger.info("[%s] رفض الحجم: مسافة الوقف واسعة جدًا لأدنى حجم (%.2f USDT مخاطرة)", symbol, qty_min * risk_per_coin)
             return None
+    # [EL2.4.2] حد LOT_SIZE الأدنى — باينانس ترفض الأمر إن نزل ناقصًا بعد الأرضية
+    if min_qty > 0 and qty < min_qty:
+        with scan_stats_lock:
+            scan_stats["rejected_binance_rules"] += 1
+        logger.info("[%s] رفض: كمية %.10g دون minQty باينانس (%.10g)", symbol, qty, min_qty)
+        return None
     # [FE1.7.0] سقف المركز الواحد — كبح الرافعة الضمنية للورقي (القيمة فوق السقف تُقلّص لا تُرفض)
     if PAPER_MAX_POSITION_PCT > 0:
         max_pos = balance * (PAPER_MAX_POSITION_PCT / 100.0)
@@ -2480,7 +2593,7 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
     if PAPER_MAX_TOTAL_PCT > 0:
         max_total = balance * (PAPER_MAX_TOTAL_PCT / 100.0)
         remaining = max_total - active_paper_notional()
-        if remaining < MIN_NOTIONAL_USDT:
+        if remaining < min_cost:
             with scan_stats_lock:
                 scan_stats["rejected_exposure_cap"] += 1
             logger.info("[%s] رفض: التعرض الورقي النشط بلغ سقف %.0f%% من الرصيد (%.2f$/%.2f$)",
@@ -2493,11 +2606,17 @@ def compute_quantity(symbol: str, entry: float, sl: float) -> Optional[float]:
             notional = qty * entry
             logger.info("[%s] قُلّص الحجم بسقف التعرض الإجمالي إلى %.2f$ (المتبقي %.2f$)",
                         symbol, notional, remaining)
-    if notional < MIN_NOTIONAL_USDT:
+    if notional < min_cost:
         # [FE1.7.0] بعد التقليص صار أدنى من قيمة التداول — لا صفقة
         with scan_stats_lock:
             scan_stats["rejected_exposure_cap"] += 1
         logger.info("[%s] رفض: الحجم بعد سقوف التعرض دون أدنى قيمة (%.2f$)", symbol, notional)
+        return None
+    # [EL2.4.2] فحص minQty أخيرًا بعد كل التقليصات
+    if min_qty > 0 and qty < min_qty:
+        with scan_stats_lock:
+            scan_stats["rejected_binance_rules"] += 1
+        logger.info("[%s] رفض: كمية %.10g بعد السقوف دون minQty باينانس (%.10g)", symbol, qty, min_qty)
         return None
     return qty
 
@@ -3666,11 +3785,35 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
     qty = float(sig["quantity"])
     realized_prev = float(sig.get("realized_pnl_usdt") or 0)   # [FE1.8.0] أرباح الجزئي السابقة
     base_qty = float(sig.get("initial_quantity") or qty)       # [FE1.8.0] الأساس الأصلي للنسبة
-    gross = qty * (exit_price - entry)
-    fees = (qty * entry + qty * exit_price) * FEE_RATE
-    pnl_usdt = gross - fees + realized_prev
-    pnl_pct = (pnl_usdt / (base_qty * entry)) * 100.0 if base_qty * entry > 0 else 0.0
     is_real = bool(sig.get("is_real"))
+    # [EL2.4.2] الورقي يبيع بقواعد باينانس: أرضية LOT_SIZE + حدود minQty/minNotional.
+    # البقايا التي يرفض باينانس بيعها (residual) تبقى أصلًا في المحفظة وتُقيَّم بسعر
+    # الخروج بلا رسوم بيع (البيع لم يقع) — قيمة محفوظة لا تختفي من المحاسبة.
+    # عند تعذر أي بيع (غبار كامل): تقييم كامل الكمية بسعر الخروج ورسوم الشراء فقط.
+    # عند بلا قواعد/كمية مطابقة أصلًا: الصيغة تعادل القديمة حرفيًا (regression-safe).
+    residual = 0.0
+    dust_val = 0.0
+    dust_full = False
+    if is_real:
+        gross = qty * (exit_price - entry)
+        fees = (qty * entry + qty * exit_price) * FEE_RATE
+        pnl_usdt = gross - fees + realized_prev
+    else:
+        sellable, residual = _paper_sell_split(sig["symbol"], qty, exit_price)
+        cost = qty * entry * (1.0 + FEE_RATE)
+        if sellable > 0:
+            proceeds = sellable * exit_price * (1.0 - FEE_RATE)
+            dust_val = residual * exit_price
+            pnl_usdt = proceeds + dust_val - cost + realized_prev
+        else:
+            dust_full = True
+            dust_val = qty * exit_price
+            pnl_usdt = dust_val - cost + realized_prev
+        if residual > 0 or dust_full:
+            with scan_stats_lock:
+                scan_stats["paper_dust_n"] += 1
+                scan_stats["paper_dust_usdt"] += dust_val
+    pnl_pct = (pnl_usdt / (base_qty * entry)) * 100.0 if base_qty * entry > 0 else 0.0
     # [EL2.4.1][F6] حارس السباق: أربعة كتّاب قد يغلقون الصف نفسه — UPDATE بشرط
     # status='open' وعدّاد صفوف؛ صف لم يُحدَّث = إغلاق مكرر يُتجاهل كاملًا (لا رصيد مزدوج)
     updated = db.execute(
@@ -3690,8 +3833,17 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
     if not is_real:
         set_paper_balance(get_paper_balance() + pnl_usdt)
     emoji = "✅" if pnl_usdt >= 0 else "🛑"
+    # [EL2.4.2] بلاغ البواقي: ما رفض باينانس بيعه ظاهر في الرسالة — لا غبار صامت
+    dust_line = ""
+    if not is_real and (residual > 0 or dust_full):
+        _dust_base = str(sig.get("symbol", "")).split("/")[0]
+        if dust_full:
+            dust_line = f"\n🧹 بقايا كاملة (غبار): {qty:.8g} {_dust_base} — دون حدود بيع باينانس، قُيّمت {dust_val:.4f}$ في الرصيد"
+        else:
+            dust_line = (f"\n🧹 بقايا بعد البيع: {residual:.8g} {_dust_base} (دون خطوة LOT_SIZE) — "
+                         f"قُيّمت {dust_val:.4f}$ في الرصيد بلا بيع")
     balance_line = (f"النتيجة: {pnl_usdt:+.2f}$ ({pnl_pct:+.2f}%)"
-                    + ("" if is_real else f" | الرصيد الورقي: {get_paper_balance():.2f}$"))
+                    + ("" if is_real else f" | الرصيد الورقي: {get_paper_balance():.2f}$")) + dust_line
     log_and_notify(
         "info" if pnl_usdt >= 0 else "warning",
         f"{emoji} إغلاق {tag}: {sig['symbol']} — {reason}\n"
@@ -4107,13 +4259,23 @@ def _account_partial_close(sig: Dict[str, Any], leg_qty: float, leg_price: float
     leg_qty = min(float(leg_qty), qty_before)
     if leg_qty <= 0 or entry <= 0 or leg_price <= 0:
         return 0.0
+    is_real = bool(sig.get("is_real"))
+    if not is_real:
+        # [EL2.4.2] الرجل الورقية تُباع بقواعد باينانس: أرضية LOT_SIZE ثم حدود
+        # minQty/minNotional — رجل دون حدود بيع = غبار يُتجاهل (0.0) والبقايا تركب
+        # مع الموضع (qty_after يشملها) كما يفعله الحقيقي مع «الغبار يُعتبر منجزًا»
+        sellable, _res = _paper_sell_split(sig["symbol"], leg_qty, leg_price)
+        if sellable <= 0:
+            logger.info("[%s] رجل جزئية ورقية دون حدود بيع باينانس (%.8g وحدة ≈ %.4f$) — تجاهل كغبار",
+                        sig.get("symbol"), _res, _res * leg_price)
+            return 0.0
+        leg_qty = sellable
     gross = leg_qty * (leg_price - entry)
     fees = (leg_qty * entry + leg_qty * leg_price) * FEE_RATE
     leg_pnl = gross - fees
     realized_new = float(sig.get("realized_pnl_usdt") or 0) + leg_pnl
     qty_after = qty_before - leg_qty
     init_qty = float(sig.get("initial_quantity") or qty_before)  # صفوف ما قبل FE1.8.0
-    is_real = bool(sig.get("is_real"))
     # [EL2.4.1][F6] نفس حارس السباق: لا محاسبة رجل على صف أُغلق من مسار منافس
     updated = db.execute(
         "UPDATE signals SET quantity=%s, notional_usdt=%s, realized_pnl_usdt=%s, initial_quantity=%s WHERE id=%s AND status='open'",
@@ -7065,6 +7227,7 @@ def initialize_bot_services() -> None:
     restore_real_mode_flag()
     restore_timeframe_flags()  # [FE1.8.9] قبل restore_scan_results — الأعمار والبنيات على الفريم المعتمد
     restore_scan_results()  # [FE1.5.0] قبل إقلاع WS — الأسواق المصنوعة تُبنى من القائمة المحدثة
+    _reset_paper_100()  # [EL2.4.2] لمرة واحدة: رصيد ورقي 100$ + تسوية المراكز القديمة عند دخولها
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
     if not DETECT_CLOSED_ONLY:   # [EL2.4.1][F7] النبض بلا فائدة على شموع مغلقة — لا خيط

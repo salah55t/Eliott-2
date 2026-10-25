@@ -410,8 +410,8 @@ def test_panel_has_floating_chart_and_compare():
 
 
 def test_version_sync():
-    assert vnz.BOT_VERSION == "EL2.4.1"
-    assert panel.BOT_VERSION == "EL2.4.1"
+    assert vnz.BOT_VERSION == "EL2.4.2"
+    assert panel.BOT_VERSION == "EL2.4.2"
 
 
 # ─────────────────────────────────────────────────────────────────────────────────

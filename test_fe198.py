@@ -355,10 +355,10 @@ def test_health_exposes_fe198_blocks():
 
 
 def test_version_sync_fe198():
-    assert vnz.BOT_VERSION == "EL2.4.1"
-    assert panel.BOT_VERSION == "EL2.4.1"
+    assert vnz.BOT_VERSION == "EL2.4.2"
+    assert panel.BOT_VERSION == "EL2.4.2"
     client = vnz.app.test_client()
-    assert client.get("/health").get_json()["version"] == "EL2.4.1"
+    assert client.get("/health").get_json()["version"] == "EL2.4.2"
 
 
 def test_panel_renders_manual_close_badge():
