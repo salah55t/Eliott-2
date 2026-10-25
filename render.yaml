@@ -50,7 +50,7 @@ services:
       - key: RISK_PCT_PER_TRADE
         value: "1.0"
       - key: PENDING_MAX_CANDLES
-        value: "10"  # [EL2.4.0] 10 شموع (2.5س على 15m) — درس باك تاست E7/E8: امتلاء أعلى بلا إفساد الجودة
+        value: "12"  # [EL2.4.3] 12 شمعة (3س على 15m) — حملة 1025: 12 فازت على 10 في 5/5 نوافذ والقمة عند 12 (14 ينهار)
       - key: ELLIOTT_SL_CAP_ATR
         value: "2.0" # [EL2.4.0] سقف المخاطرة البنيوية ×ATR15 — درس E7: PF 1.41→1.62 والذيل -103$→-46$
       - key: PAPER_BALANCE

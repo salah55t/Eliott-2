@@ -63,7 +63,7 @@ class TestRelaxedGates:
 
     def test_new_defaults(self):
         assert vnz.MAX_STRUCTURE_AGE_BARS == 36      # [FE1.8.6] بدل 30 — إثبات حي: 43 رفض تقادم مرت كلها بوابة الفرضية
-        assert vnz.PENDING_MAX_CANDLES == 10          # بدل 3 — صلاحية أطول للانتظار
+        assert vnz.PENDING_MAX_CANDLES == 12          # بدل 3 — صلاحية أطول للانتظار
 
     def test_structure_fresh_boundary_at_30(self, monkeypatch):
         # عمر 30 شمعة (7.5س على 15m) = صالح | عمر 31 = رفض — الحد FE1.8.6 بالضبط
@@ -78,13 +78,13 @@ class TestRelaxedGates:
         assert vnz.structure_fresh(_StubSetup(5), [{"close": 1.0}] * 10) is True
 
     def test_pending_validity_extended(self):
-        # [EL2.4.0] صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 2.5 ساعة
-        # (درس باك تاست E7/E8: امتلاء أعلى 31%→37% بلا إفساد الجودة)
+        # [EL2.4.3] صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 3 ساعات
+        # (حملة 1025: 12 فازت على 10 في 5/5 نوافذ، والقمة عند 12 — درس E7/E8 قبله: 6→10)
         assert vnz.SIGNAL_TIMEFRAME in vnz.TF_SECONDS
         expected_sec = vnz.PENDING_MAX_CANDLES * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
-        assert expected_sec == 10 * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
+        assert expected_sec == 12 * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
         if vnz.SIGNAL_TIMEFRAME == "15m":
-            assert expected_sec == 9000  # 2.5 ساعة بدل 1.5 ساعة
+            assert expected_sec == 10800  # 3 ساعات بدل 2.5 ساعة
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,8 +95,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.4.2"
-        assert panel.BOT_VERSION == "EL2.4.2"
+        assert vnz.BOT_VERSION == "EL2.4.3"
+        assert panel.BOT_VERSION == "EL2.4.3"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة

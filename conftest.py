@@ -66,6 +66,27 @@ def _isolate_elliott_flow_filter(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_guard():
+    """[EL2.4.3][حملة 1025] عزل حالة حارس وزن باينانس حول كل اختبار — الاختبار الذي
+    يجري نداءً حقيقيًا (فحص اتصال/لوحة) قد يسجّل حظر 429 حقيقيًا طويل الأمد حين تكون
+    الشبكة مضغوطة، فيتسرب لاختبارات الوقف الراكن الحقيقية بعدها فيفسدها عابرًا
+    (فشل بيئي لا علاقة له بالكود). نفس عقد _isolate_weekly_high: حفظ واستعادة."""
+    import vnz
+    g = vnz.rate_guard
+    saved_banned = g.banned_until
+    saved_count = g.ban_count
+    saved_err = g.last_error
+    saved_window = list(g._window)
+    yield
+    g.banned_until = saved_banned
+    g.ban_count = saved_count
+    g.last_error = saved_err
+    with g._lock:
+        g._window.clear()
+        g._window.extend(saved_window)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_default_sqlite_schema():
     """يضمن وجود جداول القاعدة الافتراضية قبل أي اختبار يلمسها بلا مصباح."""

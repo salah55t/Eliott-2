@@ -287,8 +287,8 @@ def test_flow_rows_fallback_chain(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_version_and_dual_bot_bootstrap():
-    assert vnz.BOT_VERSION == "EL2.4.2"
-    assert panel.BOT_VERSION == "EL2.4.2"
+    assert vnz.BOT_VERSION == "EL2.4.3"
+    assert panel.BOT_VERSION == "EL2.4.3"
     assert set(vnz.STRATEGY_TOGGLES) == {"Elliott_Fibonacci", "SCALP_FLOW"}
     # وصف زر موجات إليوت في اللوحة يذكر الفلتر — الدعم مرئي للمستخدم
     html = panel.PANEL_HTML

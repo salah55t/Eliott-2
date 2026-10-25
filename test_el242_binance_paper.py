@@ -324,5 +324,5 @@ def test_render_yaml_paper_balance_100():
 
 def test_version_el242():
     import panel
-    assert vnz.BOT_VERSION == "EL2.4.2"
-    assert panel.BOT_VERSION == "EL2.4.2"
+    assert vnz.BOT_VERSION == "EL2.4.3"
+    assert panel.BOT_VERSION == "EL2.4.3"

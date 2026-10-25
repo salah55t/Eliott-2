@@ -229,7 +229,7 @@ from utils.logger import get_logger, fmt_price
 #   (لا بيع ممكن أصلًا): تقييم كامل الكمية بسعر الخروج ورسوم الشراء فقط. الصيغة تعادل القديمة حرفيًا عند بلا قواعد أو كمية مطابقة (regression-safe) والصفوف الحقيقية
 #   لم تُمس. (3) الرصيد الورقي 100$ (PAPER_BALANCE في render.yaml) مع إعادة ضبط لمرة واحدة عند الإقلاع (_reset_paper_100 بعلم paper_reset_100_el242): إلغاء المعلق
 #   الورقي وتسوية المفتوح عند سعر دخوله بلا ربح/خسارة (حد محاسبي لحدود المحاكاة لا صفقة — قواطع المخاطر لا تُغذى) والصفوف الحقيقية لا تُمس.
-BOT_VERSION = "EL2.4.2"
+BOT_VERSION = "EL2.4.3"
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -257,7 +257,7 @@ MIN_WAVE_BARS = int(os.getenv("MIN_WAVE_BARS", "2"))
 FIB_TOLERANCE_PCT = float(os.getenv("FIB_TOLERANCE_PCT", "0.5"))
 MAX_OPEN_TRADES = int(os.getenv("MAX_OPEN_TRADES", "3"))
 RISK_PCT_PER_TRADE = float(os.getenv("RISK_PCT_PER_TRADE", "1.0"))
-PENDING_MAX_CANDLES = int(os.getenv("PENDING_MAX_CANDLES", "10"))  # [EL2.4.0] 10 شموع (2.5س على 15m) — درس الباك تاست E7/E8: الصلاحية الأطول رفعت الامتلاء 31%→37% بلا إفساد الجودة
+PENDING_MAX_CANDLES = int(os.getenv("PENDING_MAX_CANDLES", "12"))  # [EL2.4.3] 12 شمعة (3س على 15m) — حملة 1025: 12 فازت على 10 في 5/5 نوافذ (45ي: +153→+186$ بنفس DD 0.48%) والقمة عند 12 (14 ينهار PF 1.65→1.33)
 ELLIOTT_SL_CAP_ATR = float(os.getenv("ELLIOTT_SL_CAP_ATR", "2.0"))  # [EL2.4.0] سقف المخاطرة البنيوية ×ATR15 — درس E7: تضييق R ضاعف PF 1.41→1.62 وقصّ الذيل (-103$→-46$). 0 = معطل
 PAPER_BALANCE_START = float(os.getenv("PAPER_BALANCE", "10000.0"))
 PAPER_RESET_100_KEY = "paper_reset_100_el242"   # [EL2.4.2] علم إعادة الضبط لمرة واحدة
