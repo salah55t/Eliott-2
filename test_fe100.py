@@ -842,7 +842,7 @@ class TestWebSocketPriceFeedFE120:
         vnz.monitor_step()
         after = clean_db.query("SELECT * FROM signals", one=True)
         assert after["status"] == "open"
-        assert float(after["fill_price"]) == pytest.approx(entry - 0.2)  # ملء بسعر أفضل تحت الدخول
+        assert float(after["fill_price"]) == pytest.approx(entry)  # [EL2.4.1][F1] الملء بسعر الأمر — افتُرضت سابقًا ملءً بسعر الإغلاق الأدنى (ربح وهمي)
 
     # — التشخيص —
 

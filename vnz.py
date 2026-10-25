@@ -4416,10 +4416,24 @@ def monitor_step() -> None:
             continue
 
         # 3) الملء: لمس الشمعة لسعر الأمر المعلق (منخفض ≤ الدخول) — كما يفعل حد حقيقي
+        # [EL2.4.1][F1] الأمر المحدد يُملأ بسعره أو بسعر فتح الشمعة عند فجوة هبوط تحته —
+        # لا بسعر الإغلاق (كان يُملأ تحت الوقف المقصوص ثم يُغلق بالوقف الأعلى = ربح وهمي)
         entry = float(sig["entry_price"])
         low_now = float(last["low"])
         if low_now <= entry:
-            fill_price = entry if close_now >= entry else close_now  # ملء بسعر أفضل إن نزل السوق تحته
+            try:
+                open_now = float(last["open"])
+            except (KeyError, TypeError, ValueError):
+                open_now = entry
+            fill_price = min(entry, open_now)   # فجوة هبوط تحت الأمر = ملء بالفتح (أفضل سعر ممكن)
+            # [EL2.4.1][F1] فجوة تحت الوقف: تُفتح الصفقة وتُغلق فورًا بسعر الملء — لا انتظار شمعة تالية
+            if fill_price <= float(sig["stop_loss"]):
+                db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
+                           (fill_price, utc_now_iso(), float(sig["quantity"]), sig["id"]))
+                row_gap = db.query("SELECT * FROM signals WHERE id=%s", (sig["id"],), one=True)
+                if row_gap:
+                    close_signal_row(row_gap, fill_price, "وقف خسارة بنيوي (فجوة تحت الوقف)")
+                continue
             db.execute("UPDATE signals SET status='open', fill_price=%s, filled_at=%s, initial_quantity=%s WHERE id=%s",
                        (fill_price, utc_now_iso(), float(sig["quantity"]), sig["id"]))  # [FE1.8.0] أساس محاسبة الجزئي
             log_and_notify("info",

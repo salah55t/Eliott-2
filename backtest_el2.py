@@ -751,7 +751,10 @@ class ElliottSim:
                 self.stats["ell_pending"].get("انتهاء", 0) + 1
             return
         if lo <= pend.entry:                                # الملء بسعر الأمر
-            fill = pend.entry if close >= pend.entry else close
+            # [EL2.4.1][F1] الملء الصادق: سعر الأمر أو سعر فتح الشمعة عند فجوة هبوط تحته —
+            # لا سعر الإغلاق (كان يملأ تحت الوقف ثم يُغلق بالوقف الأعلى = ربح وهمي في الباك تاست)
+            o = candle.get("open")
+            fill = min(pend.entry, float(o)) if o is not None else pend.entry
             del self.pendings[sym]
             pos = Position(kind="ELLIOTT", symbol=sym, qty=pend.qty, entry=fill,
                            sl=pend.sl, tp1=pend.tp1, tp2=pend.tp2, tp_final=pend.tp_final,
@@ -763,6 +766,12 @@ class ElliottSim:
             pos.meta["pnl_acc"] = -self.book.leg_fee(pend.qty * fill)
             self.positions[sym] = pos
             self.stats["ell_pending"]["ملء"] = self.stats["ell_pending"].get("ملء", 0) + 1
+            if fill <= pend.sl:
+                # [EL2.4.1][F1] فجوة تحت الوقف: صفقة تُغلق فورًا بسعر الملء (لا انتظار شمعة تالية)
+                self.book.close_leg(pos, pos.qty, fill, t_ms, "وقف بنيوي")
+                self._finish(pos)
+                self.stats["ell_closes"]["وقف"] = self.stats["ell_closes"].get("وقف", 0) + 1
+                return
             self.manage_open(sym, t_ms, candle)             # نفس الشمعة تُدار (كما في الحي)
 
     def _finish(self, pos: Position) -> None:
