@@ -633,3 +633,73 @@ class TestF6DoubleCloseRace:
                             want_rowcount=True)
         assert n2 == 0
         assert vnz.db.execute("UPDATE signals SET status='cancelled' WHERE status='open'") is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F7 — الكشف الإليوتي على شموع مغلقة فقط (P1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF7ClosedCandlesDetection:
+    def _df(self, n=30, forming=True, period_sec=900):
+        """شموع 15m: الأخيرة جارية (لم تُغلق) عند forming=True، ومغلقة عند False."""
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        # مغلقة: آخر شمعة أُغلقت قبل اللحظة (open0 = now - n×period)
+        # جارية: آخر شمعة فُتحت عند now ولم تُغلق (open0 = now - (n-1)×period)
+        shift = (n - 1) if forming else n
+        open0 = now - dt.timedelta(seconds=period_sec * shift)
+        rows = []
+        price = 100.0
+        for i in range(n):
+            ts = open0 + dt.timedelta(seconds=period_sec * i)
+            price = price * (1.001 if i % 2 == 0 else 0.999)
+            rows.append({"ts": ts.timestamp() * 1000, "open": price, "high": price * 1.002,
+                         "low": price * 0.998, "close": price * 1.001, "volume": 10.0,
+                         "timestamp": ts, "symbol": "TEST/USDT", "timeframe": "15m"})
+        return pd.DataFrame(rows)
+
+    def test_forming_candle_dropped_for_detector(self, monkeypatch):
+        """شمعة جارية في الأخير ⇒ الكاشف يستقبل n-1 صفًا؛ مغلقة ⇒ n صفًا."""
+        import unittest.mock as mock
+        df = self._df(n=30, forming=True)
+        assert len(df) == 30
+        dropped = vnz._drop_forming_candle(df, "15m")
+        assert len(dropped) == 29
+        closed = self._df(n=30, forming=False)
+        assert len(vnz._drop_forming_candle(closed, "15m")) == 30
+
+    def test_no_timestamp_column_legacy(self):
+        """بلا عمود timestamp ⇒ القائمة كما هي (سلوك قديم)."""
+        df = self._df(n=10, forming=True).drop(columns=["timestamp"])
+        assert len(vnz._drop_forming_candle(df, "15m")) == 10
+
+    def test_detect_closed_only_off(self, monkeypatch):
+        """DETECT_CLOSED_ONLY=0 ⇒ لا حذف أبدًا (السلوك القديم)."""
+        monkeypatch.setattr(vnz, "DETECT_CLOSED_ONLY", False)
+        df = self._df(n=10, forming=True)
+        # scan_cycle يبني df_det = df حين العلم مطفأ — نفحص الشرط مباشرة
+        df_det = vnz._drop_forming_candle(df, "15m") if vnz.DETECT_CLOSED_ONLY else df
+        assert len(df_det) == 10
+
+    def test_momentum_loop_not_started_when_closed_only(self, monkeypatch, clean_db):
+        """DETECT_CLOSED_ONLY=1 ⇒ خيط نبض الحركة لا يُطلق عند الإقلاع."""
+        started = []
+
+        class _FakeThread:
+            def __init__(self, target=None, daemon=False, name=None, **kw):
+                started.append(name or "")
+                self.daemon = daemon
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr(vnz.threading, "Thread", _FakeThread)
+        monkeypatch.setattr(vnz, "SCAN_UNIVERSE_ENABLED", False)
+        monkeypatch.setattr(vnz, "DETECT_CLOSED_ONLY", True)
+        vnz.initialize_bot_services()
+        assert "momentum-kicker" not in started
+        assert "scan-loop" in started and "monitor-loop" in started
+        started.clear()
+        monkeypatch.setattr(vnz, "DETECT_CLOSED_ONLY", False)
+        vnz.initialize_bot_services()
+        assert "momentum-kicker" in started

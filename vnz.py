@@ -5317,6 +5317,24 @@ def _idle_rescan_maybe(cycle_bull_live: int) -> bool:
     return True
 
 
+# [EL2.4.1][F7] الكشف على شموع مغلقة حصرًا (نفس قرار الباك تاست) — الشمعة الجارية
+# غير المغلقة تُسقط من إدخال الكاشف فلا تُعاد رسوم المحاور ولا تُقاس البوابات عليها.
+# DETECT_CLOSED_ONLY=0 يعيد السلوك القديم (شمعة جارية في الكشف).
+DETECT_CLOSED_ONLY = os.getenv("DETECT_CLOSED_ONLY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _drop_forming_candle(df, timeframe):
+    """[EL2.4.1][F7] يحذف الشمعة الأخيرة إن لم تُغلق بعد (عمود timestamp).
+    بلا عمود timestamp أو أي فشل = القائمة كما هي (سلوك قديم fail-open)."""
+    try:
+        period = _tf_seconds(timeframe)
+        if period and len(df) > 1 and float(df.iloc[-1]["timestamp"].timestamp()) + period > time.time():
+            return df.iloc[:-1].reset_index(drop=True)
+    except (KeyError, AttributeError, TypeError, ValueError):
+        pass
+    return df
+
+
 def scan_cycle() -> None:
     """دورة كشف كاملة على القائمة — الكشف الصاعد يُنفذ ورقيًا والهابط يُعرض فقط."""
     db.ensure()
@@ -5331,13 +5349,15 @@ def scan_cycle() -> None:
             df = fetch_ohlcv_df(symbol, SIGNAL_TIMEFRAME, limit=OHLCV_LIMIT)
             if df is None:
                 continue
+            # [EL2.4.1][F7] الكشف على المغلقة — والسعر الحي للبوابات من df الأصلي
+            df_det = _drop_forming_candle(df, SIGNAL_TIMEFRAME) if DETECT_CLOSED_ONLY else df
             with scan_stats_lock:
                 scan_stats["scanned"] += 1
             try:
                 _record_scan_price(symbol, df.iloc[-1]["close"])  # [FE1.9.0] مرجع نبض الحركة
             except (KeyError, IndexError, TypeError, ValueError):
                 pass
-            setups = detector.scan(df)
+            setups = detector.scan(df_det)
             if not setups:
                 time.sleep(INTER_SYMBOL_SLEEP)
                 continue
@@ -5356,7 +5376,7 @@ def scan_cycle() -> None:
                 # وتشريح حي 30 رمزًا: أحدث بنية صاعدة في السوق 38 شمعة والبقية
                 # 117–469). الحديثة تُقيَّم الآن ولو وُجدت قديمة أعلى نقاطًا.
                 best = select_best_setup(
-                    [s for s in bulls if structure_fresh(s, df)] or bulls)
+                    [s for s in bulls if structure_fresh(s, df_det)] or bulls)
                 if best is not None:
                     last_close = float(df.iloc[-1]["close"])
                     traded = False
@@ -5366,11 +5386,11 @@ def scan_cycle() -> None:
                     if not trading_on:
                         _set_reject_reason(symbol, "توليد الإشارات معطل")
                         logger.info("[%s] إعداد صاعد صالح لكن توليد الإشارات معطل (ورقي متوقف)", symbol)
-                    elif not structure_fresh(best, df):
+                    elif not structure_fresh(best, df_det):
                         # [FE1.7.0] بنية أتمت قبل زمن طويل — لا إشارات من محاور أثرية
                         # [FE1.8.5] العمر الفعلي في الحكم — معايرة حية بدل تخمين
                         try:
-                            _age = (len(df) - 1) - int(best.pivot_indices[5])
+                            _age = (len(df_det) - 1) - int(best.pivot_indices[5])
                         except (TypeError, ValueError, IndexError, AttributeError):
                             _age = -1
                         _set_reject_reason(symbol, f"بنية متقادمة — عمر P5 {_age} شمعة (السقف {MAX_STRUCTURE_AGE_BARS})")
@@ -5383,7 +5403,7 @@ def scan_cycle() -> None:
                         # [FE1.9.0] العمر في الحكم — بعد إعادة الترتيب هذا عداد «تأخر كشف حقيقي» خالص:
                         # بنية حية العمر ماتت بين دورتين (النبض الجديد يعالج جذرها)
                         try:
-                            _age = (len(df) - 1) - int(best.pivot_indices[5])
+                            _age = (len(df_det) - 1) - int(best.pivot_indices[5])
                         except (TypeError, ValueError, IndexError, AttributeError):
                             _age = -1
                         _set_reject_reason(symbol, "الفرضية ماتت — الإغلاق تحت أصل الموجة 1 (P0)")
@@ -7025,7 +7045,8 @@ def initialize_bot_services() -> None:
     restore_scan_results()  # [FE1.5.0] قبل إقلاع WS — الأسواق المصنوعة تُبنى من القائمة المحدثة
     load_markets_async()
     start_ws_price_feed()  # [FE1.2.0] الأسعار الحية من ويب سوكت — REST احتياطًا فقط
-    threading.Thread(target=momentum_loop, daemon=True, name="momentum-kicker").start()  # [FE1.9.0] قاتل تأخر الكشف
+    if not DETECT_CLOSED_ONLY:   # [EL2.4.1][F7] النبض بلا فائدة على شموع مغلقة — لا خيط
+        threading.Thread(target=momentum_loop, daemon=True, name="momentum-kicker").start()  # [FE1.9.0] قاتل تأخر الكشف
     threading.Thread(target=scan_loop, daemon=True, name="scan-loop").start()
     threading.Thread(target=monitor_loop, daemon=True, name="monitor-loop").start()
     # [EL2.3.0] الاستراتيجيات المتوازية — Eliott+2: موجات إليوت (بفلتر التدفق) + التدفق جنبًا إلى جنب
