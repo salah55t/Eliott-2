@@ -515,3 +515,72 @@ class TestF4RetraceStopRefBreak:
         assert bought == []
         assert vnz.db.query("SELECT * FROM signals") == []
         assert "TEST/USDT" not in sm._retrace_orders
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F5 — أمان اللوحة: مصادقة toggle + hmac + كلمة مرور ضعيفة + CSRF (P0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RAW_TEST_CLIENT = vnz.app.test_client   # عميل خام ملتقط قبل ترقيع conftest (بلا رأس CSRF)
+
+
+class TestF5DashboardSecurity:
+    def _authed(self):
+        monkey = {"u": "admin", "p": "secret9xY"}
+        return monkey
+
+    def test_every_route_requires_auth(self, monkeypatch):
+        """كل مسار في url_map عدا /health يعيد 401 بلا مصادقة (GET وPOST بالرأس)."""
+        monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
+        monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
+        monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "secret9xY")
+        c = vnz.app.test_client()
+        skip = {"/health"}
+        checked = 0
+        for rule in vnz.app.url_map.iter_rules():
+            path = rule.rule
+            if path in skip or path.startswith("/static"):
+                continue
+            methods = rule.methods - {"HEAD", "OPTIONS"}
+            for m in methods:
+                kw = {"headers": {"X-Requested-With": "EliottPanel"}} if m == "POST" else {}
+                r = c.open(path, method=m, **kw)
+                assert r.status_code == 401, f"{m} {path} → {r.status_code} بلا مصادقة"
+                checked += 1
+        assert checked >= 15
+
+    def test_toggle_auth_and_csrf(self, clean_db, monkeypatch):
+        """toggle: بلا مصادقة 401؛ بمصادقة وبلا رأس CSRF 403؛ بكلتيهما ينجح."""
+        monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
+        monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
+        monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "secret9xY")
+        monkeypatch.setattr(vnz, "TELEGRAM_BOT_TOKEN", "")
+        raw = _RAW_TEST_CLIENT()
+        assert raw.post("/api/trading/toggle",
+                        auth=("admin", "secret9xY")).status_code == 403  # بلا رأس
+        c = vnz.app.test_client()
+        assert c.post("/api/trading/toggle").status_code == 401            # بلا مصادقة
+        before = vnz.is_trading_enabled
+        r = c.post("/api/trading/toggle", auth=("admin", "secret9xY"))
+        assert r.status_code == 200
+        assert vnz.is_trading_enabled == (not before)
+        vnz.set_trading_enabled(before, "استعادة اختبار")
+
+    def test_real_enable_blocked_on_weak_password(self, clean_db, monkeypatch):
+        """AUTH_WEAK ⇒ تفعيل التداول الحقيقي يُرفض 403 حتى بمصادقة صحيحة ورأس CSRF."""
+        monkeypatch.setattr(vnz, "DASHBOARD_PROTECTED", True)
+        monkeypatch.setattr(vnz, "DASHBOARD_USERNAME", "admin")
+        monkeypatch.setattr(vnz, "DASHBOARD_PASSWORD", "test123")   # ضعيفة عمدًا
+        monkeypatch.setattr(vnz, "AUTH_WEAK", True)
+        monkeypatch.setattr(vnz, "API_KEY", "k")
+        monkeypatch.setattr(vnz, "API_SECRET", "s")
+        c = vnz.app.test_client()
+        r = c.post("/api/trading/real", auth=("admin", "test123"), json={"enable": True})
+        assert r.status_code == 403
+        assert "كلمة مرور" in r.get_json()["error"]
+
+    def test_compare_digest_in_source(self):
+        """المقارنة ثابتة الزمن في المصدر (hmac.compare_digest)."""
+        import inspect
+        s = inspect.getsource(vnz.require_dashboard_auth) + inspect.getsource(vnz._auth_ok)
+        assert "compare_digest" in s

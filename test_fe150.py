@@ -524,7 +524,8 @@ class TestScanApi:
         r = client.post("/api/scan/run")
         assert r.status_code == 401
         cred = base64.b64encode(b"admin:test123").decode()
-        r2 = client.post("/api/scan/run", headers={"Authorization": "Basic " + cred})
+        r2 = client.post("/api/scan/run", headers={"Authorization": "Basic " + cred,
+                                             "X-Requested-With": "EliottPanel"})  # [EL2.4.1][F5] رأس CSRF
         assert r2.status_code == 200
 
     def test_health_has_public_scanner_summary(self, client):

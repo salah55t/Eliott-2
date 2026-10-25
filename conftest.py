@@ -11,7 +11,34 @@ init_db هنا مرة واحدة لكل جلسة اختبار فقط (لا يل�
 
 import os
 
+# [EL2.4.1][F5] الاختبارات تعمل بكلمة المرور الافتراضية — ارفع حظر الضعف قبل أي استيراد لـvnz
+os.environ.setdefault("ALLOW_WEAK_DASHBOARD_PASSWORD", "1")
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _csrf_header_for_tests(monkeypatch):
+    """[EL2.4.1][F5] كل POST في الاختبارات يحمل رأس CSRF تلقائيًا — اللوحة تضيفه
+    دائمًا في الإنتاج (panel.api)، والاختبار الذي يريد قصْدًا بدون الرأس يستخدم
+    عميلًا خامًا ملتقطًا قبل الترقيع."""
+    import vnz
+    orig_tc = vnz.app.test_client
+
+    def _tc(*a, **kw):
+        c = orig_tc(*a, **kw)
+        orig_post = c.post
+
+        def post(path, *a2, **kw2):
+            if kw2.get("headers") is None:
+                kw2["headers"] = {"X-Requested-With": "EliottPanel"}
+            return orig_post(path, *a2, **kw2)
+
+        c.post = post
+        return c
+
+    monkeypatch.setattr(vnz.app, "test_client", _tc)
+    yield
 
 
 @pytest.fixture(autouse=True)

@@ -573,7 +573,7 @@ let REFRESHING = false;
 
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
 
-async function api(path, opts){ const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function api(path, opts){ opts = opts || {}; opts.headers = Object.assign({'X-Requested-With':'EliottPanel'}, opts.headers || {}); const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); return r.json(); }
 
 function renderFeed(ws){
   const b = $('feed-badge');

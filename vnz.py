@@ -160,6 +160,7 @@ import threading
 import time
 import re
 from collections import OrderedDict, deque
+import hmac
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -231,6 +232,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "admin")     # [FE1.0.2] افتراضي عهد المشروع — يُرفع من متغيرات البيئة
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "test123")   # [FE1.0.2] اللوحة تبقى محمية حتى بلا متغيرات بيئة (نشر يدوي)
+# [EL2.4.1][F5] كلمة مرور ضعيفة/افتراضية تحظر تفعيل التداول الحقيقي (الورقي يعمل كعادته) —
+# ALLOW_WEAK_DASHBOARD_PASSWORD=1 للتجارب المحلية/الاختبارات فقط
+AUTH_WEAK = (os.getenv("ALLOW_WEAK_DASHBOARD_PASSWORD", "0") != "1") and (
+    DASHBOARD_PASSWORD.strip().lower() in ("", "test123", "admin", "password", "123456")
+    or len(DASHBOARD_PASSWORD) < 8)
 
 # [FE1.0.2] فريم الكشف 15m — بطلب المستخدم («اريد تغيير الفريم الفحص الى 15 دقيقة بدل الساعة»)
 # وبجدول معايرة المؤلف (engine/pattern_detector.py): نطاق 15m = 0.004–0.008 «Primary entry TF»
@@ -5561,11 +5567,31 @@ def keep_alive_loop() -> None:
 app = Flask(__name__)
 
 
+@app.before_request
+def _csrf_guard():
+    """[EL2.4.1][F5] حارس CSRF: كل POST على /api/ يطالب برأس X-Requested-With:
+    EliottPanel — اللوحة تضيفه دائمًا (panel.api)، ومتصفح مصادَق من موقع خارجي
+    لا يستطيع تمريره في طلب عابر للمواقع (فشل آمن 403)."""
+    if request.method == "POST" and request.path.startswith("/api/"):
+        if request.headers.get("X-Requested-With") != "EliottPanel":
+            return jsonify({"ok": False, "error": "رأس X-Requested-With مفقود"}), 403
+
+
+def _auth_ok(auth) -> bool:
+    """[EL2.4.1][F5] مقارنة اعتمادات اللوحة ثابتة الزمن (hmac.compare_digest) —
+    لا تسريب توقيت على اسم المستخدم أو كلمة المرور."""
+    if not auth:
+        return False
+    u = (auth.username or "").encode()
+    p = (auth.password or "").encode()
+    return bool(hmac.compare_digest(u, DASHBOARD_USERNAME.encode())
+                & hmac.compare_digest(p, DASHBOARD_PASSWORD.encode()))
+
+
 def require_dashboard_auth():
     if not DASHBOARD_PROTECTED:
         return
-    auth = request.authorization
-    if not (auth and auth.username == DASHBOARD_USERNAME and auth.password == DASHBOARD_PASSWORD):
+    if not _auth_ok(request.authorization):
         return Response(
             "لوحة Fibo-Elio محمية — أدخل اسم المستخدم وكلمة المرور\n",
             401, {"WWW-Authenticate": "Basic realm='Fibo-Elio Dashboard'"},
@@ -6045,6 +6071,9 @@ def set_trading_enabled(value: bool, source: str = "اللوحة") -> str:
 
 @app.route("/api/trading/toggle", methods=["POST"])
 def toggle_trading_status():
+    resp = require_dashboard_auth()   # [EL2.4.1][F5] التبديل محمي كبقية المسارات — كان مفتوحًا
+    if resp:
+        return resp
     msg = set_trading_enabled(not is_trading_enabled, "اللوحة")
     return jsonify({"trading_enabled": is_trading_enabled, "message": msg})
 
@@ -6183,6 +6212,9 @@ def api_trading_real():
                 "binance": binance_status_snapshot(),
             })
         if target:
+            if AUTH_WEAK:   # [EL2.4.1][F5] لا وضع حقيقي بكلمة مرور لوحة افتراضية/ضعيفة
+                return jsonify({"ok": False,
+                                "error": "غيّر كلمة مرور اللوحة الافتراضية قبل تفعيل التداول الحقيقي"}), 403
             if not (API_KEY and API_SECRET):
                 return jsonify({"ok": False,
                                 "error": "مفاتيح باينانس غير مضبوطة — أضف BINANCE_API_KEY و BINANCE_API_SECRET في متغيرات بيئة Render أولًا"}), 400
@@ -6968,6 +7000,10 @@ def _telegram_control_loop() -> None:
 
 
 def initialize_bot_services() -> None:
+    if AUTH_WEAK:   # [EL2.4.1][F5] تنبيه صريح ومرة واحدة — الورقي يعمل والحقيقي محجوب
+        logger.critical(
+            "كلمة مرور لوحة التحكم ضعيفة/افتراضية (DASHBOARD_PASSWORD) — غيّرها قبل "
+            "تفعيل التداول الحقيقي؛ التفعيل مرفوض حتى تغييرها (ALLOW_WEAK_DASHBOARD_PASSWORD=1 للتجارب)")
     init_db()
     restore_trading_flag()
     restore_real_mode_flag()

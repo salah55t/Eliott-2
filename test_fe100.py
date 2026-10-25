@@ -619,7 +619,8 @@ class TestLiveTrackingAndManualActions:
         import base64
         cred = base64.b64encode(b"admin:test123").decode()
         r = client.post("/api/trades/cancel", json={"id": 1},
-                        headers={"Authorization": "Basic " + cred})
+                        headers={"Authorization": "Basic " + cred,
+                                 "X-Requested-With": "EliottPanel"})  # [EL2.4.1][F5] رأس CSRF
         assert r.status_code == 404  # مصادقة تمر — لكن لا صفقة بهذا المعرف
 
 
