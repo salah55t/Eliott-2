@@ -380,6 +380,15 @@ def _size_position(entry: float, sl: float) -> Tuple[Optional[float], Optional[f
     if notional > cap:
         qty = cap / entry
         notional = qty * entry
+    # [EL2.4.1][F9] سقف التعرض الورقي المشترك مع المحرك — None يعني المفتاح غائب
+    # أو السقف معطل (fail-open: سلوك اليوم دون تغيير)
+    remaining = _hf("paper_exposure_remaining")
+    if remaining is not None:
+        if remaining < cfg.min_notional:
+            return None, None, "سقف التعرض الورقي المشترك ممتلئ"
+        if notional > remaining:
+            qty = remaining / entry
+            notional = qty * entry
     if notional < cfg.min_notional:
         return None, None, "قيمة صفقة أقل من الحد الأدنى"
     return qty, notional, ""

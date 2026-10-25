@@ -719,3 +719,57 @@ class TestF8MinNotionalRaise:
             assert math.isclose(qty, 2.0, rel_tol=1e-9)
         finally:
             vnz.set_paper_balance(10000.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F9 — سقف التعرّض الورقي المشترك للسكالب (P2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF9PaperExposureCap:
+    def _host(self, clean_db, tg_off, monkeypatch, remaining):
+        fake = {
+            "db_query": vnz.db.query, "db_execute": vnz.db.execute,
+            "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
+            "get_live_price": lambda s: 100.0,
+            "get_recent_candles": lambda s, tf, limit, min_candles=2: None,
+            "is_trading_enabled": lambda: True,
+            "is_real_mode": lambda: False,
+            "risk_entry_block_reason": lambda: None,
+            "symbol_has_active": lambda s: False,
+            "get_paper_balance": vnz.get_paper_balance,
+            "fee_rate": 0.001, "deviation_threshold": 0.006,
+            "utc_now_iso": vnz.utc_now_iso, "fmt_price": vnz.fmt_price,
+            "seconds_until_next_candle": lambda tf: 300.0,
+            "watchlist": lambda: ["TEST/USDT"],
+        }
+        if remaining is not None:
+            fake["paper_exposure_remaining"] = lambda: remaining
+        from strategies import manager as sm
+        sm.attach_host(fake)
+        return sm
+
+    def test_reduced_to_remaining(self, clean_db, tg_off, monkeypatch):
+        """متبقٍ 15$ أقل من المطلوب ⇒ القيمة تُخفَّض إلى المتبقي (فوق الحد الأدنى)."""
+        sm = self._host(clean_db, tg_off, monkeypatch, remaining=15.0)
+        qty, notional, why = sm._size_position(100.0, 99.0)
+        assert why == "" and notional is not None
+        assert math.isclose(notional, 15.0, rel_tol=1e-9)
+        assert math.isclose(qty * 100.0, 15.0, rel_tol=1e-9)
+
+    def test_rejected_when_remaining_below_min(self, clean_db, tg_off, monkeypatch):
+        """متبقٍ أقل من الحد الأدنى ⇒ رفض بسبي معلوم."""
+        sm = self._host(clean_db, tg_off, monkeypatch, remaining=5.0)
+        qty, notional, why = sm._size_position(100.0, 99.0)
+        assert qty is None and "سقف التعرض الورقي المشترك" in why
+
+    def test_missing_key_keeps_legacy(self, clean_db, tg_off, monkeypatch):
+        """المفتاح غائب (مضيف قديم/سقف معطل) ⇒ سلوك اليوم دون تغيير."""
+        sm = self._host(clean_db, tg_off, monkeypatch, remaining=None)
+        qty, notional, why = sm._size_position(100.0, 99.0)
+        assert why == "" and qty is not None
+        # السقف: min(30% من 10000 = 3000$، SCALP_MAX_NOTIONAL_USDT = 1200$) = 1200$
+        assert math.isclose(notional, 1200.0, rel_tol=1e-9)
+
+    def test_real_host_has_key(self):
+        """قاموس المضيف الحقيقي من vnz يحمل المفتاح."""
+        assert "paper_exposure_remaining" in vnz.scalp_host()

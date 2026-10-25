@@ -2217,6 +2217,14 @@ def binance_depth_snapshot(symbol: str, limit: int = 100) -> Optional[Dict[str, 
         return None
 
 
+def paper_exposure_remaining() -> Optional[float]:
+    """[EL2.4.1][F9] المتبقي من سقف التعرض الورقي المشترك (PAPER_MAX_TOTAL_PCT) —
+    None إن كان السقف معطلًا (fail-open: السكالب لا يرى قيدًا كما في اليوم)."""
+    if PAPER_MAX_TOTAL_PCT <= 0:
+        return None
+    return get_paper_balance() * (PAPER_MAX_TOTAL_PCT / 100.0) - active_paper_notional()
+
+
 def scalp_host() -> Dict[str, Any]:
     """[EL2.0.0] جسر حقن اعتماديات مدير السكالب — حزمة strategies لا تستورد vnz
     أبدًا (تلافي إعادة تنفيذ الوحدة عند التشغيل __main__) وكل احتياجاتها تمر من هنا.
@@ -2235,6 +2243,7 @@ def scalp_host() -> Dict[str, Any]:
         "risk_entry_block_reason": risk_entry_block_reason,
         "symbol_has_active": symbol_has_active,
         "get_paper_balance": get_paper_balance,
+        "paper_exposure_remaining": paper_exposure_remaining,  # [EL2.4.1][F9] سقف التعرض المشترك
         "fee_rate": FEE_RATE, "deviation_threshold": DEVIATION_THRESHOLD,
         "zigzag_pivots": zigzag_pivots,
         "close_signal_row": close_signal_row, "close_real_trade": close_real_trade,
