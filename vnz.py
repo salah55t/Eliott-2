@@ -650,7 +650,7 @@ class Database:
             finally:
                 cur.close()
 
-    def execute(self, sql: str, params: Tuple = ()) -> None:
+    def execute(self, sql: str, params: Tuple = (), want_rowcount: bool = False):
         with self.lock:
             cur = self.conn.cursor()
             try:
@@ -661,6 +661,9 @@ class Database:
                     cur.execute(self._ph(sql))
                 if not USE_POSTGRES:
                     self.conn.commit()
+                # [EL2.4.1][F6] want_rowcount=True يعيد عدد الصفوف المتأثرة (حارس السباق) —
+                # نداءات قائمة لا تتغير (تعيد None كما في اليوم)
+                return cur.rowcount if want_rowcount else None
             finally:
                 cur.close()
 
@@ -3654,11 +3657,18 @@ def close_signal_row(sig: Dict[str, Any], exit_price: float, reason: str,
     pnl_usdt = gross - fees + realized_prev
     pnl_pct = (pnl_usdt / (base_qty * entry)) * 100.0 if base_qty * entry > 0 else 0.0
     is_real = bool(sig.get("is_real"))
-    db.execute(
+    # [EL2.4.1][F6] حارس السباق: أربعة كتّاب قد يغلقون الصف نفسه — UPDATE بشرط
+    # status='open' وعدّاد صفوف؛ صف لم يُحدَّث = إغلاق مكرر يُتجاهل كاملًا (لا رصيد مزدوج)
+    updated = db.execute(
         "UPDATE signals SET status='closed', close_price=%s, close_reason=%s, closed_at=%s,"
-        " pnl_usdt=%s, pnl_pct=%s, exit_order_id=%s WHERE id=%s",
+        " pnl_usdt=%s, pnl_pct=%s, exit_order_id=%s WHERE id=%s AND status='open'",
         (exit_price, reason, utc_now_iso(), round(pnl_usdt, 6), round(pnl_pct, 4), exit_order_id, sig["id"]),
+        want_rowcount=True,
     )
+    if not updated:
+        logger.info("[محاسبة] تجاهل إغلاقًا مكررًا للصف %s (%s) — أُغلق من مسار آخر سابقًا",
+                    sig.get("id"), sig.get("symbol"))
+        return
     _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة — مسح حالة الحدود
     _risk_on_close(pnl_usdt)  # [FE1.8.0] قاطع المخاطر: حد يومي + متتاليات
     _resolve_manual_close(sig)  # [FE1.9.8] أي إغلاق فعلي يمسح علم «غلق يدوي مطلوب»
@@ -4084,10 +4094,14 @@ def _account_partial_close(sig: Dict[str, Any], leg_qty: float, leg_price: float
     qty_after = qty_before - leg_qty
     init_qty = float(sig.get("initial_quantity") or qty_before)  # صفوف ما قبل FE1.8.0
     is_real = bool(sig.get("is_real"))
-    db.execute(
-        "UPDATE signals SET quantity=%s, notional_usdt=%s, realized_pnl_usdt=%s, initial_quantity=%s WHERE id=%s",
+    # [EL2.4.1][F6] نفس حارس السباق: لا محاسبة رجل على صف أُغلق من مسار منافس
+    updated = db.execute(
+        "UPDATE signals SET quantity=%s, notional_usdt=%s, realized_pnl_usdt=%s, initial_quantity=%s WHERE id=%s AND status='open'",
         (qty_after, qty_after * entry, round(realized_new, 6), init_qty, sig["id"]),
+        want_rowcount=True,
     )
+    if not updated:
+        return 0.0
     if not is_real:
         set_paper_balance(get_paper_balance() + leg_pnl)
     sig["quantity"] = qty_after

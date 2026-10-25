@@ -584,3 +584,52 @@ class TestF5DashboardSecurity:
         import inspect
         s = inspect.getsource(vnz.require_dashboard_auth) + inspect.getsource(vnz._auth_ok)
         assert "compare_digest" in s
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F6 — الإغلاق المزدوج المتسابق (P1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF6DoubleCloseRace:
+    def _open_row(self, fill=100.0, qty=10.0):
+        vnz.db.execute(
+            "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price,"
+            " fill_price, stop_loss, take_profit, quantity, notional_usdt, created_at,"
+            " filled_at, initial_quantity, is_real) VALUES (%s,%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,0)",
+            ("TEST/USDT", "BULLISH", "Elliott_Fibonacci", fill, fill, 95.0, 130.0,
+             qty, fill * qty, "2026-10-24T10:00:00Z", "2026-10-24T10:05:00Z", qty))
+        return vnz.db.query("SELECT * FROM signals WHERE symbol='TEST/USDT'", one=True)
+
+    def test_close_signal_row_idempotent(self, clean_db, tg_off):
+        """إغلاق الصف نفسه مرتين بالقاموس نفسه: الرصيد الورقي يتغير مرة واحدة."""
+        sig = self._open_row()
+        bal0 = vnz.get_paper_balance()
+        vnz.close_signal_row(sig, 105.0, "اختبار")
+        bal1 = vnz.get_paper_balance()
+        assert bal1 != bal0
+        vnz.close_signal_row(sig, 105.0, "اختبار")   # الثاني مرفوض — لا محاسبة
+        bal2 = vnz.get_paper_balance()
+        assert bal2 == bal1, "الإغلاق المكرر يجب ألا يمس الرصيد"
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row["status"] == "closed"
+        assert vnz.db.query("SELECT COUNT(*) AS n FROM signals WHERE status='closed'")[0]["n"] == 1
+
+    def test_partial_close_rejects_closed_row(self, clean_db, tg_off):
+        """محاسبة رجل جزئية على صف مغلق: تعيد 0.0 ولا تمس الرصيد."""
+        sig = self._open_row()
+        vnz.close_signal_row(sig, 105.0, "اختبار")
+        bal1 = vnz.get_paper_balance()
+        out = vnz._account_partial_close(sig, 2.0, 106.0, "اختبار على صف مغلق")
+        assert out == 0.0
+        assert vnz.get_paper_balance() == bal1
+
+    def test_execute_want_rowcount(self, clean_db, tg_off):
+        """want_rowcount=True يعيد عدد الصفوف؛ الافتراضي None (لا تغيير نداءات قائمة)."""
+        self._open_row()
+        n = vnz.db.execute("UPDATE signals SET status='cancelled' WHERE status='open'",
+                           want_rowcount=True)
+        assert n == 1
+        n2 = vnz.db.execute("UPDATE signals SET status='cancelled' WHERE status='open'",
+                            want_rowcount=True)
+        assert n2 == 0
+        assert vnz.db.execute("UPDATE signals SET status='cancelled' WHERE status='open'") is None
