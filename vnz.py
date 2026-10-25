@@ -2131,13 +2131,20 @@ def _paper_floor_qty(symbol: str, qty: float) -> float:
 
 
 def _reset_paper_100() -> None:
-    """[EL2.4.2] إعادة ضبط لمرة واحدة: الرصيد الورقي يبدأ من PAPER_BALANCE_START —
-    المعلق الورقي يُلغى والمفتوح يُسوّى عند سعر دخوله (لا ربح ولا خسارة — حد
-    محاسبي لحدود المحاكاة لا صفقة) حتى لا تبقى مراكز بحجم الرصيد القديم تعلق
-    سقوف التعرض الجديدة. الصفوف الحقيقية لا تُمس إطلاقًا."""
+    """[EL2.4.2] إعادة ضبط حسب الهدف: علم المفتاح يسجّل قيمة الرصيد التي عُدّل إليها —
+    إقلاع بهدف مختلف (تغيّر PAPER_BALANCE على المنصة بعد هذا الإقلاع) يعيد الضبط
+    مرة واحدة للهدف الجديد، والأهداف المتطابقة = لا فعل (idempotent). المعلق الورقي
+    يُلغى والمفتوح يُسوّى عند سعر دخوله (لا ربح ولا خسارة — حد محاسبي لحدود
+    المحاكاة لا صفقة) حتى لا تبقى مراكز بحجم الرصيد القديم تعلق سقوف التعرض.
+    الصفوف الحقيقية لا تُمس إطلاقًا."""
     try:
-        if db_get_state(PAPER_RESET_100_KEY):
-            return
+        prev = db_get_state(PAPER_RESET_100_KEY)
+        if prev is not None:
+            try:
+                if abs(float(prev) - PAPER_BALANCE_START) < 1e-9:
+                    return   # أُعيد الضبط مسبقًا لنفس الهدف
+            except (TypeError, ValueError):
+                return   # علم قديم غير مفهوم — أعِد الضبط احتياطًا (القيمة 1 تراثية)
         pend = db.query("SELECT id FROM signals WHERE status='pending' AND COALESCE(is_real,0)=0") or []
         for r in pend:
             db.execute("UPDATE signals SET status='cancelled', close_reason=%s, closed_at=%s"
@@ -2155,7 +2162,7 @@ def _reset_paper_100() -> None:
                         utc_now_iso(), r["id"]))
             _ext_forget(r["id"])
         set_paper_balance(PAPER_BALANCE_START)
-        db_set_state(PAPER_RESET_100_KEY, "1")
+        db_set_state(PAPER_RESET_100_KEY, repr(PAPER_BALANCE_START))
         log_and_notify(
             "warning",
             f"♻️ إعادة ضبط الرصيد الورقي إلى {PAPER_BALANCE_START:.0f}$ (EL2.4.2) — "

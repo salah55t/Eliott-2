@@ -284,7 +284,17 @@ class TestResetPaper100:
         assert len(flat) == 2
         for r in flat:
             assert float(r["pnl_usdt"] or 0) == 0.0    # تسوية بلا ربح/خسارة — لا تغذية للقاطع
-        assert vnz.db_get_state(vnz.PAPER_RESET_100_KEY) == "1"
+        assert vnz.db_get_state(vnz.PAPER_RESET_100_KEY) == repr(vnz.PAPER_BALANCE_START)
+
+    def test_target_change_retriggers_reset(self, clean_db, rules, monkeypatch):
+        # إقلاع بهدف مختلف (تغيّر PAPER_BALANCE على المنصة بعد إقلاع سابق) → يعيد الضبط
+        vnz._reset_paper_100()
+        insert_sig(status="pending", fill=100.0, qty=5.0)
+        monkeypatch.setattr(vnz, "PAPER_BALANCE_START", 100.0)   # الهدف الجديد (كان الافتراضي 10000 في بيئة الاختبار)
+        vnz._reset_paper_100()
+        assert len(vnz.db.query("SELECT * FROM signals WHERE status='pending'")) == 0
+        assert abs(vnz.get_paper_balance() - 100.0) < 1e-9
+        assert vnz.db_get_state(vnz.PAPER_RESET_100_KEY) == "100.0"
 
     def test_reset_idempotent(self, clean_db, rules):
         vnz._reset_paper_100()
