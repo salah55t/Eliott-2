@@ -9,6 +9,7 @@
 
 import json
 import math
+import time
 
 import pandas as pd
 import pytest
@@ -407,3 +408,110 @@ class TestF3RetraceGates:
         sm._cooldowns["SCALP_FLOW"].clear()
         sm._scan_cycle()
         assert bought and len(bought[0]) == 2
+
+
+class TestF4RetraceStopRefBreak:
+    """شمعة الملء الارتدادي تكسر الوقف المرجعي بعد اللمس — الوقف أولًا (أسوأ ترتيب داخل الشمعة)."""
+
+    def _host(self, clean_db, tg_off, monkeypatch, *, real=False, price_v=97.5):
+        price = {"v": price_v}
+        bought = []
+        fake = {
+            "db_query": vnz.db.query, "db_execute": vnz.db.execute,
+            "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
+            "get_live_price": lambda s: price["v"],
+            "get_recent_candles": lambda s, tf, limit, min_candles=2: None,
+            "fetch_ohlcv_raw": lambda s, tf, limit: (None, None),
+            "binance_full_klines": lambda s, iv, limit: None,
+            "binance_depth": lambda s, limit: None,
+            "utc_now_iso": vnz.utc_now_iso, "fmt_price": vnz.fmt_price,
+            "seconds_until_next_candle": lambda tf: 300.0,
+            "is_trading_enabled": lambda: True,
+            "is_real_mode": lambda: real,
+            "risk_entry_block_reason": lambda: None,
+            "symbol_has_active": lambda s: False,
+            "get_paper_balance": vnz.get_paper_balance,
+            "fee_rate": 0.001, "deviation_threshold": 0.006,
+            "zigzag_pivots": vnz.zigzag_pivots,
+            "close_signal_row": vnz.close_signal_row,
+            "close_real_trade": vnz.close_real_trade,
+            "account_partial_close": vnz._account_partial_close,
+            "place_real_market_sell": vnz.place_real_market_sell,
+            "place_real_stop_loss": lambda s, q, p: {"id": "S1"},
+            "replace_real_stop": vnz._replace_real_stop,
+            "cancel_real_order": vnz.cancel_real_order,
+            "real_market_buy": lambda s, quote: bought.append((s, quote)) or
+                {"id": "R1", "average": price["v"], "amount": quote / price["v"]},
+            "real_free_usdt": lambda: 1000.0,
+            "real_max_notional": lambda: 50.0,
+            "real_adjust_amount": lambda ex, s, q: q,
+            "real_min_amount": lambda mkt: 0.0,
+            "real_min_cost": lambda mkt: 0.0,
+            "real_market_rules": lambda s, ex: {},
+            "binance_trade_exchange": lambda: object(),
+            "watchlist": lambda: ["TEST/USDT"],
+        }
+        from strategies import manager as sm
+        sm.attach_host(fake)
+        for c in sm._counters.values():
+            c.update({"signals": 0, "partials": 0, "early_exits": 0, "closes": {},
+                      "rejects": {}, "last_signal_at": None, "last_signal_symbol": None})
+        for d in sm._cooldowns.values():
+            d.clear()
+        return sm, price, bought
+
+    def test_paper_break_closes_at_sl_ref(self, clean_db, tg_off, monkeypatch):
+        """ورقي: لمست شمعة التأكيد الحد (99.4) ثم كسرت الوقف المرجعي (95.0) وأغلقت فوقه
+        ⇒ الصفقة تُفتح ثم تُغلق فورًا بسعر الوقف المرجعي — خسارة معلنة."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch)
+        sm._retrace_orders["TEST/USDT"] = {
+            "strategy": "SCALP_FLOW", "label": "انجلال التدفق", "symbol": "TEST/USDT",
+            "limit": 97.4, "sl_ref": 95.0, "tp1": 100.0, "tp2": 101.5, "rr1": 1.0,
+            "entry_ref": 99.0, "atr5": 1.0, "reason": "اختبار", "armed_ts": 0.0,
+            "expires_ts": time.time() + 8 * 300, "meta": {"atr5": 1.0}}
+        from strategies.base import ScalpContext
+        k5 = [{"ts": 0.0, "open": 97.9, "high": 98.0, "low": 94.5, "close": 97.8,
+               "volume": 10.0, "taker_base": None}]
+        sm._manage_retrace("TEST/USDT", ScalpContext(
+            symbol="TEST/USDT", now_ts=time.time(), k5=k5, k15=[],
+            live_price=97.8, cvd_source="taker", atr5=1.0))
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row is not None and row["status"] == "closed"
+        assert math.isclose(float(row["close_price"]), 95.0, rel_tol=1e-9)
+        assert float(row["pnl_usdt"]) < 0
+        assert sm._counters["SCALP_FLOW"]["closes"].get("sl", 0) == 1
+
+    def test_paper_gap_below_sl_ref_no_open(self, clean_db, tg_off, monkeypatch):
+        """ورقي: ملء تحت الوقف المرجعي نفسه ⇒ لا فتح أصلًا + رفض معلن."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch)
+        sm._retrace_orders["TEST/USDT"] = {
+            "strategy": "SCALP_FLOW", "label": "انجلال التدفق", "symbol": "TEST/USDT",
+            "limit": 97.4, "sl_ref": 95.0, "tp1": 100.0, "tp2": 101.5, "rr1": 1.0,
+            "entry_ref": 99.0, "atr5": 1.0, "reason": "اختبار", "armed_ts": 0.0,
+            "expires_ts": time.time() + 8 * 300, "meta": {"atr5": 1.0}}
+        from strategies.base import ScalpContext
+        k5 = [{"ts": 0.0, "open": 94.0, "high": 97.9, "low": 93.5, "close": 97.8,
+               "volume": 10.0, "taker_base": None}]
+        sm._manage_retrace("TEST/USDT", ScalpContext(
+            symbol="TEST/USDT", now_ts=time.time(), k5=k5, k15=[],
+            live_price=97.8, cvd_source="taker", atr5=1.0))
+        assert vnz.db.query("SELECT * FROM signals") == []
+        assert "TEST/USDT" not in sm._retrace_orders
+
+    def test_real_break_no_buy(self, clean_db, tg_off, monkeypatch):
+        """حقيقي: شمعة التأكيد كسرت الوقف المرجعي ⇒ لا شراء أصلًا + تبريد إلغاء."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, real=True)
+        sm._retrace_orders["TEST/USDT"] = {
+            "strategy": "SCALP_FLOW", "label": "انجلال التدفق", "symbol": "TEST/USDT",
+            "limit": 97.4, "sl_ref": 95.0, "tp1": 100.0, "tp2": 101.5, "rr1": 1.0,
+            "entry_ref": 99.0, "atr5": 1.0, "reason": "اختبار", "armed_ts": 0.0,
+            "expires_ts": time.time() + 8 * 300, "meta": {"atr5": 1.0}}
+        from strategies.base import ScalpContext
+        k5 = [{"ts": 0.0, "open": 97.9, "high": 98.0, "low": 94.5, "close": 97.8,
+               "volume": 10.0, "taker_base": None}]
+        sm._manage_retrace("TEST/USDT", ScalpContext(
+            symbol="TEST/USDT", now_ts=time.time(), k5=k5, k15=[],
+            live_price=97.8, cvd_source="taker", atr5=1.0))
+        assert bought == []
+        assert vnz.db.query("SELECT * FROM signals") == []
+        assert "TEST/USDT" not in sm._retrace_orders

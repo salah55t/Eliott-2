@@ -545,6 +545,35 @@ def _manage_retrace(sym: str, ctx: ScalpContext) -> None:
     if lo > od["limit"] or close < od["limit"]:
         return
     fill = min(od["limit"], op)               # فجوة تحت الحد = ملء بالفتح (أفضل)
+    # [EL2.4.1][F4] شمعة التأكيد كسرت الوقف المرجعي بعد اللمس — نفترض أسوأ ترتيب داخل
+    # الشمعة (الوقف أولًا): الحقيقي لا يشتري، والورقي يُفتح ويُغلق فورًا بسعر الوقف المرجعي.
+    real_fill = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
+    if lo <= od["sl_ref"]:
+        _retrace_orders.pop(sym, None)
+        _cooldown_set(od["strategy"], sym, cfg.cancel_cooldown_sec)
+        if real_fill:
+            _reject(od["strategy"], "ملء ارتدادي: الوقف المرجعي كُسر في شمعة التأكيد")
+            return
+        if fill <= od["sl_ref"]:
+            _reject(od["strategy"], "ملء ارتدادي: فجوة تحت الوقف المرجعي")
+            return
+        _bump(od["strategy"], "retrace_filled")
+        _log("warning",
+             f"🛑 ملء ارتدادي فوق وقف مكسور: {sym} — افتُتح الصف ثم أُغلق فورًا بسعر "
+             f"الوقف المرجعي {HOST.get('fmt_price', lambda p: str(p))(od['sl_ref'])}",
+             "SCALP_RETRACE")
+        sig = ScalpSignal(strategy=od["strategy"], label=od["label"], symbol=sym,
+                          entry_ref=od["entry_ref"], sl=od["sl_ref"], tp1=od["tp1"],
+                          tp2=od["tp2"], rr1=od["rr1"], reason=od["reason"],
+                          meta=dict(od["meta"]))
+        _open_position(sig, fill_price=fill)
+        rows = _hf("db_query", "SELECT * FROM signals WHERE symbol=%s AND strategy_name=%s"
+                               " AND status='open' ORDER BY id DESC LIMIT 1",
+                   (sym, od["strategy"])) or []
+        if rows:
+            _close_position(rows[0], od["sl_ref"],
+                            SL_REASONS.get(od["strategy"], "وقف سكالب"), "sl")
+        return
     # بوابات إعادة الفحص لحظة الملء — [EL2.4.1][F3] نفس بوابات الدخول كاملةً:
     # زر التداول وقاطع المخاطر ومفتاح الاستراتيجية والسقوف والمشغول والتبريد والقاطع اليومي.
     # لا تعارض مع التبريد لأنه لا يُضبط عند التسلح.
