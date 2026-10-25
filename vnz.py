@@ -380,6 +380,8 @@ PARTIAL_AT_R_ENABLED = os.getenv("PARTIAL_AT_R_ENABLED", "1").strip().lower() no
 PARTIAL_CLOSE_PCT = float(os.getenv("PARTIAL_CLOSE_PCT", "50.0"))              # نسبة الإغلاق الجزئي عند +N×R — تحقيق ربح جزئي وتقليص التعرض (1-99)
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "5.0"))         # إيقاف الإشارات الجديدة بعد خسارة يومية % من أساس اليوم (0 يعطل)
 MAX_CONSEC_LOSSES = int(os.getenv("MAX_CONSEC_LOSSES", "3"))                   # قاطع المتتاليات: N خسائر متتالية → تبريد تداول (0 يعطل)
+BE_FEE_BUFFER = float(os.getenv("BE_FEE_BUFFER", "0"))                     # [EL2.4.1][F10-a] BE شامل الرسوم: الوقف عند دخول×(1+2×رسوم) (0 = الدخول كما في اليوم)
+LOSS_STREAK_MIN_PCT = float(os.getenv("LOSS_STREAK_MIN_PCT", "0"))         # [EL2.4.1][F10-b] عتبة أهمية الخسارة % من الأساس — دونها لا تعد في المتتالية ولا تُصفّرها (0 = كل خسارة تعد)
 LOSS_STREAK_COOLDOWN_SEC = float(os.getenv("LOSS_STREAK_COOLDOWN_SEC", "14400"))  # تبريد 4 ساعات بعد المتتالية — المراقبة تستمر بلا انقطاع
 RR_NET_MIN = float(os.getenv("RR_NET_MIN", "0.3"))                             # أرضية R:R صافية بعد رسوم الاتجاهين — الإشارات تحت الأرضية تُرفض (0 يعطل)
 
@@ -3885,7 +3887,13 @@ def _risk_on_close(pnl_usdt: float) -> None:
             db_set_state("risk_streak", "0")
         realized = float(db_get_state("risk_realized", "0.0") or 0) + float(pnl_usdt or 0)
         db_set_state("risk_realized", repr(realized))
-        if pnl_usdt < 0:
+        counted = pnl_usdt < 0
+        if counted and LOSS_STREAK_MIN_PCT > 0:
+            # [EL2.4.1][F10-b] خسارة دون عتبة الأهمية محايدة: لا تعد في المتتالية ولا تُصفّرها
+            _base = _risk_base_now()
+            if _base > 0 and float(pnl_usdt) >= -_base * LOSS_STREAK_MIN_PCT / 100.0:
+                counted = False
+        if counted:
             streak = int(float(db_get_state("risk_streak", "0") or 0)) + 1
             db_set_state("risk_streak", str(streak))
             prev_pause = db_get_state("risk_pause_until")
@@ -3901,7 +3909,7 @@ def _risk_on_close(pnl_usdt: float) -> None:
                     f"(المراقبة وإدارة المواضع القائمة تستمران بلا انقطاع)",
                     "RISK_PAUSE",
                 )
-        else:
+        elif pnl_usdt >= 0:
             db_set_state("risk_streak", "0")
     except Exception as exc:
         logger.warning("تحديث عدادات المخاطر فشل: %s", exc)
@@ -4175,16 +4183,18 @@ def _protection_step(sig: Dict[str, Any], high_now: float) -> None:
             meta["partial_done"] = True
             _account_partial_close(sig, leg_qty, trigger, "تحقق +1R")
     # 2) BE@1R — نقل الوقف إلى الدخول (بعد الجزئي كي يحمل الراكن الكمية المتبقية)
-    if BE_AT_R_ENABLED and not meta.get("be_done") and float(sig["stop_loss"]) < entry:
-        be_msg = (f"🔒 وقف عند التعادل (BE@1R): {sig['symbol']} — الوقف انتقل إلى الدخول "
-                  f"{fmt_price(entry)} والموضع بلا مخاطرة")
+    # [EL2.4.1][F10-a] BE_FEE_BUFFER>0 يرفع BE ليشمل رسوم الاتجاهين (دخول+خروج)
+    be_price = entry * (1 + 2 * FEE_RATE) if BE_FEE_BUFFER > 0 else entry
+    if BE_AT_R_ENABLED and not meta.get("be_done") and float(sig["stop_loss"]) < be_price:
+        be_msg = (f"🔒 وقف عند التعادل (BE@1R): {sig['symbol']} — الوقف انتقل إلى "
+                  f"{fmt_price(be_price)} والموضع بلا مخاطرة")
         if is_real and REAL_STANDING_STOP:
-            if _replace_real_stop(sig, entry, ex):
+            if _replace_real_stop(sig, be_price, ex):
                 # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف الراكن في UPDATE واحد
                 meta["armed_at"] = time.time()
                 db.execute("UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
-                           (entry, json.dumps(meta, ensure_ascii=False), sig["id"]))
-                sig["stop_loss"] = entry
+                           (be_price, json.dumps(meta, ensure_ascii=False), sig["id"]))
+                sig["stop_loss"] = be_price
                 meta["be_done"] = True
                 log_and_notify("info", be_msg, "BREAK_EVEN")
             # فشل الاستبدال (راكن حي/فشل عابر) → بلا علم — تعاد المحاولة في الدورة القادمة
@@ -4192,8 +4202,8 @@ def _protection_step(sig: Dict[str, Any], high_now: float) -> None:
             # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف في UPDATE واحد
             meta["armed_at"] = time.time()
             db.execute("UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
-                       (entry, json.dumps(meta, ensure_ascii=False), sig["id"]))
-            sig["stop_loss"] = entry
+                       (be_price, json.dumps(meta, ensure_ascii=False), sig["id"]))
+            sig["stop_loss"] = be_price
             meta["be_done"] = True
             log_and_notify("info", be_msg, "BREAK_EVEN")
     _save_sig_meta(sig["id"], meta)
@@ -4411,7 +4421,7 @@ def handle_real_pending(sig: Dict[str, Any], close_now: float, p0: float) -> Non
                                      f"إبطال بنيوي: إغلاق {fmt_price(close_now)} خلف أصل الموجة 1 (P0={fmt_price(p0)})")
     elif sig.get("expires_at") and utc_now_iso() > sig["expires_at"]:
         cancel_real_order(ex, sig["symbol"], sig["order_id"])
-        _resync_after_cancel_attempt(sig, ex, "انتهت صلاحية الأمر المعلق (3 شموع) دون ملء كامل")
+        _resync_after_cancel_attempt(sig, ex, f"انتهت صلاحية الأمر المعلق ({PENDING_MAX_CANDLES} شموع) دون ملء كامل")   # [EL2.4.1][F10-e] النص من الإعداد لا حرفي
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -4481,7 +4491,7 @@ def monitor_step() -> None:
         # 2) انتهاء الصلاحية — MAX_CANDLES_PENDING شمعة كشف (الأصل)
         if sig.get("expires_at") and utc_now_iso() > sig["expires_at"]:
             db.execute("UPDATE signals SET status='expired', close_reason=%s, closed_at=%s WHERE id=%s",
-                       ("انتهت صلاحية الأمر المعلق (3 شموع) دون لمس منطقة الدخول", utc_now_iso(), sig["id"]))
+                       (f"انتهت صلاحية الأمر المعلق ({PENDING_MAX_CANDLES} شموع) دون لمس منطقة الدخول", utc_now_iso(), sig["id"]))   # [EL2.4.1][F10-e]
             _ext_forget(sig["id"])   # [EL2.4.1][F2] نهاية دورة الحياة
             # [FE1.9.6] بلاغ حي: إشارة انتهت واختفت من اللوحة بصمت أربكت المراقب —
             # إشعار مثل الملء: دورة حياة المعلق (ولادة/ملء/انتهاء/إبطال) كلها مرئية

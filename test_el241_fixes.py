@@ -10,6 +10,7 @@
 import json
 import math
 import time
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -773,3 +774,175 @@ class TestF9PaperExposureCap:
     def test_real_host_has_key(self):
         """قاموس المضيف الحقيقي من vnz يحمل المفتاح."""
         assert "paper_exposure_remaining" in vnz.scalp_host()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F10 — تحسينات صغيرة بأعلام مطفأة افتراضيًا (P3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF10SmallImprovements:
+    def _engine_open_row(self, fill=100.0, stop=95.0, tp=160.0, qty=10.0):
+        vnz.db.execute(
+            "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price,"
+            " fill_price, stop_loss, take_profit, quantity, notional_usdt, created_at,"
+            " filled_at, initial_quantity, is_real) VALUES (%s,%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,0)",
+            ("TEST/USDT", "BULLISH", "Elliott_Fibonacci", fill, fill, stop, tp,
+             qty, fill * qty, "2026-10-24T10:00:00Z", "2026-10-24T10:05:00Z", qty))
+        return vnz.db.query("SELECT * FROM signals WHERE symbol='TEST/USDT'", one=True)
+
+    def test_be_fee_buffer_default_zero(self, clean_db, tg_off):
+        """الافتراضي 0 ⇒ BE عند الدخول حرفيًا (سلوك اليوم)."""
+        sig = self._engine_open_row()
+        vnz._protection_step(sig, 110.0)
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert math.isclose(float(row["stop_loss"]), 100.0, rel_tol=1e-9)
+
+    def test_be_fee_buffer_enabled(self, clean_db, tg_off, monkeypatch):
+        """BE_FEE_BUFFER>0 ⇒ BE = دخول×(1+2×رسوم) = 100×1.002 = 100.2."""
+        monkeypatch.setattr(vnz, "BE_FEE_BUFFER", 1.0)
+        sig = self._engine_open_row()
+        vnz._protection_step(sig, 110.0)
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert math.isclose(float(row["stop_loss"]), 100.0 * (1 + 2 * vnz.FEE_RATE), rel_tol=1e-9)
+
+    def test_loss_streak_min_pct_default(self, clean_db, tg_off):
+        """الافتراضي 0 ⇒ كل خسارة تعد في المتتالية (سلوك اليوم)."""
+        vnz.db_set_state("risk_streak", "0")
+        vnz._risk_on_close(-10.0)
+        assert vnz.db_get_state("risk_streak") == "1"
+
+    def test_loss_streak_min_pct_enabled(self, clean_db, tg_off, monkeypatch):
+        """LOSS_STREAK_MIN_PCT=0.5 مع أساس 10000 ⇒ عتبة 50$: خسارة 10$ محايدة، و100$ تعد."""
+        monkeypatch.setattr(vnz, "LOSS_STREAK_MIN_PCT", 0.5)
+        vnz.db_set_state("risk_streak", "0")
+        vnz._risk_on_close(-10.0)          # دون العتبة — محايدة
+        assert vnz.db_get_state("risk_streak") == "0"
+        vnz._risk_on_close(-10.0)          # لا تزال محايدة — لا تصفير ولا عدّ
+        assert vnz.db_get_state("risk_streak") == "0"
+        vnz._risk_on_close(-100.0)         # فوق العتبة — تعد
+        assert vnz.db_get_state("risk_streak") == "1"
+        vnz._risk_on_close(5.0)            # ربح — يصفّر
+        assert vnz.db_get_state("risk_streak") == "0"
+
+    def test_scalp_require_taker(self, clean_db, tg_off, monkeypatch):
+        """SCALP_REQUIRE_TAKER=1 ⇒ proxy لا يدخل، وtaker يدخل طبيعيًا."""
+        from strategies import manager as sm
+        from strategies.base import ScalpContext, ScalpSignal
+
+        class _FakeStrat:
+            label = "انجلال التدفق"
+
+            def evaluate(self, ctx):
+                return ScalpSignal(strategy="SCALP_FLOW", label="انجلال التدفق",
+                                   symbol="TEST/USDT", entry_ref=99.0, sl=96.5,
+                                   tp1=100.0, tp2=101.5, rr1=1.2, reason="اختبار",
+                                   meta={"atr5": 1.0})
+
+        fake = {
+            "db_query": vnz.db.query, "db_execute": vnz.db.execute,
+            "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
+            "get_live_price": lambda s: 99.0,
+            "get_recent_candles": lambda s, tf, limit, min_candles=2: None,
+            "is_trading_enabled": lambda: True,
+            "is_real_mode": lambda: False,
+            "risk_entry_block_reason": lambda: None,
+            "symbol_has_active": lambda s: False,
+            "get_paper_balance": vnz.get_paper_balance,
+            "fee_rate": 0.001, "deviation_threshold": 0.006,
+            "utc_now_iso": vnz.utc_now_iso, "fmt_price": vnz.fmt_price,
+            "seconds_until_next_candle": lambda tf: 300.0,
+            "watchlist": lambda: ["TEST/USDT"],
+        }
+        sm.attach_host(fake)
+        sm._instances["SCALP_FLOW"] = _FakeStrat()
+        sm._retrace_orders.clear()               # [عزل] حالة من اختبارات سابقة
+        for d in sm._cooldowns.values():
+            d.clear()
+        monkeypatch.setattr(sm, "SCALP_REQUIRE_TAKER", True)
+
+        def _mk_ctx(src_):
+            k5 = [{"ts": 0.0, "open": 99.0, "high": 99.2, "low": 98.5, "close": 99.0,
+                   "volume": 10.0, "taker_base": None}]
+            return ScalpContext(symbol="TEST/USDT", now_ts=time.time(), k5=k5, k15=[],
+                                live_price=99.0, cvd_source=src_, atr5=1.0)
+
+        monkeypatch.setattr(sm, "_build_ctx", lambda s: _mk_ctx("proxy"))
+        sm._scan_cycle()
+        assert vnz.db.query("SELECT * FROM signals") == []
+        assert "TEST/USDT" not in sm._retrace_orders
+        monkeypatch.setattr(sm, "_build_ctx", lambda s: _mk_ctx("taker"))
+        sm._scan_cycle()
+        assert "TEST/USDT" in sm._retrace_orders
+
+    def test_early_exit_uses_live_price(self, clean_db, tg_off, monkeypatch):
+        """الخروج المبكر الورقي (مفعّل افتراضيًا) يستعمل السعر الحي لا إغلاق الشمعة."""
+        from strategies import manager as sm
+        from strategies.base import ScalpContext
+        from strategies import indicators as ind
+        price = {"v": 101.0}
+        fake = {
+            "db_query": vnz.db.query, "db_execute": vnz.db.execute,
+            "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
+            "get_live_price": lambda s: price["v"],
+            "get_recent_candles": lambda s, tf, limit, min_candles=2: None,
+            "is_trading_enabled": lambda: True,
+            "is_real_mode": lambda: False,
+            "risk_entry_block_reason": lambda: None,
+            "symbol_has_active": lambda s: False,
+            "get_paper_balance": vnz.get_paper_balance,
+            "fee_rate": 0.001, "deviation_threshold": 0.006,
+            "utc_now_iso": vnz.utc_now_iso, "fmt_price": vnz.fmt_price,
+            "seconds_until_next_candle": lambda tf: 300.0,
+            "watchlist": lambda: ["TEST/USDT"],
+            "close_signal_row": vnz.close_signal_row,
+            "close_real_trade": vnz.close_real_trade,
+            "account_partial_close": vnz._account_partial_close,
+        }
+        sm.attach_host(fake)
+        t0 = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+        vnz.db.execute(
+            "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price,"
+            " fill_price, stop_loss, take_profit, quantity, notional_usdt, created_at,"
+            " filled_at, initial_quantity, is_real, peak_price)"
+            " VALUES ('TEST/USDT','BULLISH','SCALP_FLOW','open',99.4,99.4,97.0,105.0,"
+            " 10.0,994.0,%s,%s,10.0,0,99.4)", (t0, t0))
+        k5 = [{"ts": 0.0, "open": 99.5, "high": 99.6, "low": 98.5, "close": 99.0,
+               "volume": 10.0, "taker_base": None}]
+        ctx = ScalpContext(symbol="TEST/USDT", now_ts=time.time(), k5=k5, k15=[],
+                           live_price=price["v"], cvd_source="taker", atr5=1.0)
+        monkeypatch.setattr(sm, "_build_ctx", lambda s: ctx)
+        monkeypatch.setattr(ind, "cvd_series", lambda k5_: {"cvd": [1.0, 0.0], "ema": [0.0, 1.0]})
+        monkeypatch.setattr(ind, "supertrend",
+                            lambda h, l, c, p, m_: {"line": 500.0})
+        sm._early_exits_all()
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row["status"] == "closed"
+        assert math.isclose(float(row["close_price"]), 101.0, rel_tol=1e-9)
+
+    def test_pending_expiry_text_uses_config(self, clean_db, tg_off, monkeypatch):
+        """نص الانتهاء يحمل قيمة PENDING_MAX_CANDLES الفعلية لا «3 شموع» القديمة."""
+        vnz.db.execute(
+            "INSERT INTO signals (symbol, direction, strategy_name, status, entry_price,"
+            " stop_loss, take_profit, quantity, pivots_json, created_at, expires_at)"
+            " VALUES ('TEST/USDT','BULLISH','Elliott_Fibonacci','pending',118.0,114.0,"
+            "135.0,10.0,%s,%s,%s)",
+            (json.dumps({"P0": 90.0, "P5": 130.0}), "2026-10-24T10:00:00Z",
+             "2020-01-01T00:00:00Z"))
+        monkeypatch.setattr(vnz, "fetch_ohlcv_df",
+                            lambda *a, **k: _candle(138, 139, 137, 138))
+        vnz.monitor_step()
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row["status"] == "expired"
+        assert f"({vnz.PENDING_MAX_CANDLES} شموع)" in (row["close_reason"] or "")
+        assert "3 شموع" not in (row["close_reason"] or "")
+
+    def test_docs_and_render_keys(self):
+        """README بلا profile_reversion + كل المفاتيح الجديدة موثقة وفي render.yaml."""
+        readme = open("README.md", encoding="utf-8").read()
+        assert "profile_reversion" not in readme
+        for key in ("SCALP_REAL_RETRACE", "BE_FEE_BUFFER", "LOSS_STREAK_MIN_PCT",
+                    "SCALP_REQUIRE_TAKER", "ALLOW_WEAK_DASHBOARD_PASSWORD",
+                    "DETECT_CLOSED_ONLY"):
+            assert key in readme, key
+            assert key in open("ENV_VARIABLES.txt", encoding="utf-8").read(), key
+            assert key in open("render.yaml", encoding="utf-8").read(), key

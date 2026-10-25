@@ -136,6 +136,16 @@ services:
         value: "1.5"     # أقصى ارتفاع للسوق فوق منطقة الدخول % — لا مطاردة (0 يعطل)
       - key: DETECT_CLOSED_ONLY          # [EL2.4.1][F7] الكشف على شموع مغلقة حصرًا
         value: "1"
+      - key: SCALP_REAL_RETRACE          # [EL2.4.1][F3] الحقيقي يسلّح أوامر ارتدادية كالورقي
+        value: "1"
+      - key: BE_FEE_BUFFER               # [EL2.4.1][F10] BE شامل الرسوم (0 = الدخول)
+        value: "0"
+      - key: LOSS_STREAK_MIN_PCT         # [EL2.4.1][F10] عتبة أهمية الخسارة للمتتالية
+        value: "0"
+      - key: SCALP_REQUIRE_TAKER         # [EL2.4.1][F10] CVD حقيقي حصرًا (0 = proxy مقبول)
+        value: "0"
+      - key: ALLOW_WEAK_DASHBOARD_PASSWORD  # [EL2.4.1][F5] للتجارب المحلية فقط
+        value: "0"
       - key: MAX_STRUCTURE_AGE_BARS
         value: "36"      # [FE1.8.5] 36 شمعة (9س) بدل 30 — إثبات حي FE1.8.4: 43 رفض تقادم مرت كلها بوابة الفرضية الحية أولًا؛ premise-alive والمطاردة يحميان
       - key: SYMBOL_COOLDOWN_SEC

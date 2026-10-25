@@ -152,6 +152,11 @@
 | `SCALP_PARTIAL_PCT` | `50` | نسبة الجني عند TP1 (+BE تلقائي) |
 
 | `DETECT_CLOSED_ONLY` | `1` | الكشف على شموع مغلقة حصرًا — لا شمعة جارية في إدخال الكاشف (F7) |
+| `SCALP_REAL_RETRACE` | `1` | الوضع الحقيقي يسلّح الأوامر الارتدادية كالورقي (F3) |
+| `BE_FEE_BUFFER` | `0` | وقف التعادل شامل رسوم الاتجاهين: دخول×(1+2×رسوم) — 0 = الدخول (F10) |
+| `LOSS_STREAK_MIN_PCT` | `0` | عتبة أهمية الخسارة % من الأساس لدخول سلسلة الخسائر — دونها محايدة (F10) |
+| `SCALP_REQUIRE_TAKER` | `0` | لا دخول سكالب إلا بـ CVD حقيقي من taker (F10) |
+| `ALLOW_WEAK_DASHBOARD_PASSWORD` | `0` | يسمح بكلمة مرور لوحة ضعيفة للتجارب — الوضع الحقيقي محجوب افتراضيًا معها (F5) |
 
 القائمة الكاملة في `ENV_VARIABLES.txt` — وإعدادات موجات إليوت كما هي في fibo-elio.
 
@@ -185,7 +190,6 @@ EliottPlus2/
 │   ├── indicators.py           #   SuperTrend/ADX/ATR/CVD/VolumeProfile/الجدران/فيبو — دوال نقصة
 │   ├── base.py                 #   الواجهة المشتركة + الضبط البيئي + حارس السبوت
 │   ├── flow_ignition.py        #   S1: اندلاع CVD + SuperTrend + جدران كأهداف
-│   ├── profile_reversion.py    #   S2: رمشة VAL + امتصاص CVD + تقارب فيبو
 │   └── manager.py              #   المدير: مسح 5m + مراقبة 20ث + بوابات + دورة حياة كاملة
 ├── engine/                     # محرك موجات إليوت الأصلي (MIT — منقول حرفيًا)
 │   ├── pattern_detector.py / wave_validator.py / fibonacci.py

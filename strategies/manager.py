@@ -63,6 +63,9 @@ S1_ENABLED = _flag("SCALP_S1_ENABLED")
 # [EL2.4.1][F3] توحيد سلوك الارتدادي: الوضع الحقيقي يسلّح الأوامر الارتدادية كالورقي
 # (لا شراء قمة الاندفاع — النسخة التي خسرت في BT-LAB). SCALP_REAL_RETRACE=0 يعيد القديم.
 SCALP_REAL_RETRACE = _flag("SCALP_REAL_RETRACE", "1")
+# [EL2.4.1][F10] تحسينات صغيرة كلها مطفأة افتراضيًا — تُفعّل من البيئة بعد إثبات الباك تاست
+BE_FEE_BUFFER = float(os.getenv("BE_FEE_BUFFER", "0"))            # (أ) BE شامل رسوم الاتجاهين
+SCALP_REQUIRE_TAKER = _flag("SCALP_REQUIRE_TAKER", "0")           # (ج) لا دخول إلا بـ CVD حقيقي من taker
 
 STRATEGY_NAMES = ("SCALP_FLOW",)
 # [EL2.3.0] قرار الحاكم: حذف كل الاستراتيجيات عدا موجات إليوت والتدفق —
@@ -621,6 +624,11 @@ def _scan_cycle() -> Dict[str, int]:
         if ctx is None:
             stats["ctx_fail"] += 1
             continue
+        # [EL2.4.1][F10-c] SCALP_REQUIRE_TAKER: لا دخول إلا بـ CVD حقيقي (taker) —
+        # proxy تقريبي مختلف عن الذي اختُبر (0 = سلوك اليوم)
+        if SCALP_REQUIRE_TAKER and getattr(ctx, "cvd_source", "") != "taker":
+            _reject("SCALP_FLOW", "CVD غير حقيقي (proxy) — SCALP_REQUIRE_TAKER")
+            continue
         # [EL2.4.0] الأوامر الارتدادية أولًا (ملء/إبطال/انتهاء) — والمعلق يحتكر الرمز
         if sym in _retrace_orders:
             _manage_retrace(sym, ctx)
@@ -680,6 +688,9 @@ def _early_exits_all() -> None:
         if ctx is None or not ctx.k5:
             continue
         closes = [float(r["close"]) for r in ctx.k5]
+        # [EL2.4.1][F10-d] الخروج الورقي بالسعر الحي (أدق من إغلاق الشمعة) —
+        # ويرجع إلى الإغلاق إن غاب السعر الحي
+        exit_px = float(ctx.live_price) if getattr(ctx, "live_price", None) else closes[-1]
         cv = ind.cvd_series(ctx.k5)
         for sig in srows:
             try:
@@ -689,7 +700,7 @@ def _early_exits_all() -> None:
                     st = ind.supertrend([float(r["high"]) for r in ctx.k5],
                                         [float(r["low"]) for r in ctx.k5], closes, 10, 2.5)
                     if cv and st and cv["cvd"][-1] < cv["ema"][-1] and closes[-1] < st["line"]:
-                        _close_position(sig, closes[-1], "انقلاب الدلتا (CVD) ضد الاتجاه مع كسر SuperTrend", "early")
+                        _close_position(sig, exit_px, "انقلاب الدلتا (CVD) ضد الاتجاه مع كسر SuperTrend", "early")
                         _bump(name, "early_exits")
                         continue
                 # مهلة الصفقة — شبكة أمان مزدوجة مع المراقبة
@@ -700,7 +711,7 @@ def _early_exits_all() -> None:
                         t0 = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
                         age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - t0).total_seconds() / 60.0
                         if age_min > hold_min:
-                            _close_position(sig, closes[-1], f"مهلة السكالب انتهت ({hold_min} دقيقة)", "time")
+                            _close_position(sig, exit_px, f"مهلة السكالب انتهت ({hold_min} دقيقة)", "time")
                     except ValueError:
                         pass
             except Exception:
@@ -842,13 +853,15 @@ def _monitor_cycle() -> Dict[str, int]:
                     meta["be_done"] = True
                     # BE نقي: الوقف لنقطة الدخول — المتبقي يطير نحو TP2 بلا مخاطرة
                     # (عقيدة محمية: أي قفل أبكر من BE يقطع العداء نحو الهدف الثاني)
-                    # [EL2.4.1][F2] تسليح الحدود: armed_at مع نقل الوقف في UPDATE واحد
-                    meta["armed_at"] = time.time()
+                    # [EL2.4.1][F10-a] BE_FEE_BUFFER>0 يرفع BE ليشمل رسوم الاتجاهين
+                    be_px = fill * (1 + 2 * float(HOST.get("fee_rate") or 0.001)) \
+                        if BE_FEE_BUFFER > 0 else fill
+                    meta["armed_at"] = time.time()   # [EL2.4.1][F2] تسليح الحدود مع نقل الوقف
                     _hf("db_execute", "UPDATE signals SET stop_loss=%s, meta_json=%s WHERE id=%s",
-                        (fill, json.dumps(meta, ensure_ascii=False), sig["id"]))
-                    sig["stop_loss"] = fill
+                        (be_px, json.dumps(meta, ensure_ascii=False), sig["id"]))
+                    sig["stop_loss"] = be_px
                     if sig.get("is_real"):
-                        _hf("replace_real_stop", sig, fill)
+                        _hf("replace_real_stop", sig, be_px)
                     stats["partial"] += 1
                 else:
                     meta["partial_done"] = True   # غبار/فشل بيع — لا نعيد المحاولة للأبد
