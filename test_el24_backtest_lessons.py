@@ -170,8 +170,13 @@ class TestRetraceOrders:
         monkeypatch.setattr(mng, "_cooldown_set", lambda *a, **k: None)
         monkeypatch.setattr(mng, "_scalp_open_count", lambda s=None: 0)
         monkeypatch.setattr(mng, "_daily_loss_block", lambda s: False)
+        # [EL2.4.1][F3] بوابات الملء صارت الكاملة (_entry_gates) — الوهمي يجيب عنها كلها:
+        # زر التداول مفعّل، لا قاطع مخاطر، لا صفقة نشطة، لا تبريد
         monkeypatch.setattr(mng, "_hf",
-                            lambda key, *a, **k: False if key == "symbol_has_active" else None)
+                            lambda key, *a, **k: (True if key == "is_trading_enabled"
+                                                  else False if key == "symbol_has_active"
+                                                  else None))
+        monkeypatch.setattr(mng, "_entry_gates", lambda s, sym: (True, ""))
         monkeypatch.setattr(mng, "_open_position",
                             lambda sig, fill_price=None: opened.setdefault("fill", fill_price) or True)
         mng._arm_retrace(self._sig(entry=100.0, sl=99.0, atr=1.0))   # الحد 99.4
@@ -186,8 +191,13 @@ class TestRetraceOrders:
         monkeypatch.setattr(mng, "_cooldown_set", lambda *a, **k: None)
         monkeypatch.setattr(mng, "_scalp_open_count", lambda s=None: 0)
         monkeypatch.setattr(mng, "_daily_loss_block", lambda s: False)
+        # [EL2.4.1][F3] بوابات الملء صارت الكاملة (_entry_gates) — الوهمي يجيب عنها كلها:
+        # زر التداول مفعّل، لا قاطع مخاطر، لا صفقة نشطة، لا تبريد
         monkeypatch.setattr(mng, "_hf",
-                            lambda key, *a, **k: False if key == "symbol_has_active" else None)
+                            lambda key, *a, **k: (True if key == "is_trading_enabled"
+                                                  else False if key == "symbol_has_active"
+                                                  else None))
+        monkeypatch.setattr(mng, "_entry_gates", lambda s, sym: (True, ""))
         monkeypatch.setattr(mng, "_open_position",
                             lambda sig, fill_price=None: opened.setdefault("fill", fill_price) or True)
         mng._arm_retrace(self._sig(entry=100.0, sl=99.0, atr=1.0))   # الحد 99.4

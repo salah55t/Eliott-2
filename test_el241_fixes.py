@@ -249,3 +249,161 @@ class TestF2ExtremesSinceEvent:
         row = vnz.db.query("SELECT * FROM signals", one=True)
         assert row["status"] == "open"
         assert math.isclose(float(row["fill_price"]), 118.0, rel_tol=1e-9)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F3 — بوابات الملء الارتدادي وتوحيد الوضع الحقيقي (P0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestF3RetraceGates:
+    def _host(self, clean_db, tg_off, monkeypatch, *, trading=True, real=False,
+              risk_block=None, price_v=97.5):
+        """مضيف سكالب مبسّط — أزرار الحكم قابلة للضبط لكل اختبار."""
+        import time as _t
+        price = {"v": price_v}
+        bought = []
+        fake = {
+            "db_query": vnz.db.query, "db_execute": vnz.db.execute,
+            "log_and_notify": vnz.log_and_notify, "logger": vnz.logger,
+            "get_live_price": lambda s: price["v"],
+            "get_recent_candles": lambda s, tf, limit, min_candles=2: None,
+            "fetch_ohlcv_raw": lambda s, tf, limit: (None, None),
+            "binance_full_klines": lambda s, iv, limit: None,
+            "binance_depth": lambda s, limit: None,
+            "utc_now_iso": vnz.utc_now_iso, "fmt_price": vnz.fmt_price,
+            "seconds_until_next_candle": lambda tf: 300.0,
+            "is_trading_enabled": lambda: trading,
+            "is_real_mode": lambda: real,
+            "risk_entry_block_reason": lambda: risk_block,
+            "symbol_has_active": lambda s: False,
+            "get_paper_balance": vnz.get_paper_balance,
+            "fee_rate": 0.001, "deviation_threshold": 0.006,
+            "zigzag_pivots": vnz.zigzag_pivots,
+            "close_signal_row": vnz.close_signal_row,
+            "close_real_trade": vnz.close_real_trade,
+            "account_partial_close": vnz._account_partial_close,
+            "place_real_market_sell": vnz.place_real_market_sell,
+            "place_real_stop_loss": lambda s, q, p: {"id": "S1"},
+            "replace_real_stop": vnz._replace_real_stop,
+            "cancel_real_order": vnz.cancel_real_order,
+            "real_market_buy": lambda s, quote: bought.append((s, quote)) or
+                {"id": "R1", "average": price["v"], "amount": quote / price["v"]},
+            "real_free_usdt": lambda: 1000.0,
+            "real_max_notional": lambda: 50.0,
+            "real_adjust_amount": lambda ex, s, q: q,
+            "real_min_amount": lambda mkt: 0.0,
+            "real_min_cost": lambda mkt: 0.0,
+            "real_market_rules": lambda s, ex: {},
+            "binance_trade_exchange": lambda: object(),
+            "watchlist": lambda: ["TEST/USDT"],
+        }
+        from strategies import manager as sm
+        sm.attach_host(fake)
+        for c in sm._counters.values():
+            c.update({"signals": 0, "partials": 0, "early_exits": 0, "closes": {},
+                      "rejects": {}, "last_signal_at": None, "last_signal_symbol": None})
+        for d in sm._cooldowns.values():
+            d.clear()
+        return sm, price, bought
+
+    def _arm(self, sm, sym="TEST/USDT", limit=97.4, sl_ref=95.0, atr5=1.0):
+        import time as _t
+        sm._retrace_orders[sym] = {
+            "strategy": "SCALP_FLOW", "label": "انجلال التدفق", "symbol": sym,
+            "limit": limit, "sl_ref": sl_ref, "tp1": 100.0, "tp2": 101.5,
+            "rr1": 1.0, "entry_ref": 99.0, "atr5": atr5,
+            "reason": "اختبار", "armed_ts": _t.time(),
+            "expires_ts": _t.time() + 8 * 300, "meta": {"atr5": atr5}}
+
+    def _ctx(self, sym="TEST/USDT", o=98.0, h=98.2, l=97.0, c=97.9):
+        import time as _t
+        from strategies.base import ScalpContext
+        k5 = [{"ts": 0.0, "open": o, "high": h, "low": l, "close": c,
+               "volume": 10.0, "taker_base": None}]
+        return ScalpContext(symbol=sym, now_ts=_t.time(), k5=k5, k15=[],
+                            live_price=c, cvd_source="taker", atr5=1.0)
+
+    def test_retrace_fill_blocked_when_trading_disabled(self, clean_db, tg_off, monkeypatch):
+        """تداول معطل ⇒ أمر ارتدادي بشمعة تأكيد صالحة لا يفتح صفقة ويزيد عداد الرفض."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, trading=False)
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        assert bought == []
+        rows = vnz.db.query("SELECT * FROM signals")
+        assert rows == []
+        assert "TEST/USDT" not in sm._retrace_orders
+        rej = sm._counters["SCALP_FLOW"]["rejects"]
+        assert any("ملء ارتدادي أُسقط" in k for k in rej), rej
+
+    def test_retrace_fill_blocked_by_risk_entry_block(self, clean_db, tg_off, monkeypatch):
+        """قاطع مخاطر المحرك نشط ⇒ بوابات الملء تمنع الافتتاح."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch,
+                                       risk_block="قاطع الخسارة اليومي")
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        assert bought == []
+        assert vnz.db.query("SELECT * FROM signals") == []
+
+    def test_retrace_paper_fill_opens_when_gates_pass(self, clean_db, tg_off, monkeypatch):
+        """البوابات مفتوحة (ورقي) ⇒ الملء الارتدادي يفتح صفقة بحمولة retrace_fill."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, trading=True)
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row is not None and row["status"] == "open"
+        assert math.isclose(float(row["fill_price"]), 97.4, rel_tol=1e-9)
+        assert "retrace_fill" in (row["meta_json"] or "")
+
+    def test_real_retrace_guarded_fill(self, clean_db, tg_off, monkeypatch):
+        """حقيقي: شراء مرة واحدة عند حيّة ≤ الحد + 0.4×ATR؛ ولا شراء عند الابتعاد أو كسر الوقف."""
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, real=True,
+                                       price_v=97.5)
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        assert len(bought) == 1, "الملء الحقيقي المؤكد يجب أن يشتري مرة واحدة"
+        row = vnz.db.query("SELECT * FROM signals", one=True)
+        assert row["is_real"] == 1
+        assert math.isclose(float(row["fill_price"]), 97.5, rel_tol=1e-9)
+        # الابتعاد عن الحد: لا شراء
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, real=True,
+                                       price_v=99.9)
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        assert bought == []
+        # كسر الوقف المرجعي: لا شراء
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, real=True,
+                                       price_v=94.5)
+        self._arm(sm)
+        sm._manage_retrace("TEST/USDT", self._ctx())
+        assert bought == []
+
+    def test_scan_cycle_real_arm_switch(self, clean_db, tg_off, monkeypatch):
+        """SCALP_REAL_RETRACE=1 (الافتراضي) ⇒ الوضع الحقيقي يسلّح أمرًا ارتداديًا؛
+        SCALP_REAL_RETRACE=0 ⇒ السلوك القديم: شراء فوري عند إغلاق شمعة القرار."""
+        import time as _t
+        from strategies import manager as sm
+        from strategies.base import ScalpSignal
+        sm, price, bought = self._host(clean_db, tg_off, monkeypatch, real=True,
+                                       price_v=99.0)
+
+        class _FakeStrat:
+            label = "انجلال التدفق"
+
+            def evaluate(self, ctx):
+                return ScalpSignal(strategy="SCALP_FLOW", label="انجلال التدفق",
+                                   symbol="TEST/USDT", entry_ref=99.0, sl=96.5,
+                                   tp1=100.0, tp2=101.5, rr1=1.2, reason="اختبار",
+                                   meta={"atr5": 1.0})
+
+        sm._instances["SCALP_FLOW"] = _FakeStrat()
+        monkeypatch.setattr(sm, "_build_ctx", lambda s: self._ctx(o=99.0, h=99.2,
+                                                                  l=98.5, c=99.0))
+        sm._scan_cycle()
+        assert "TEST/USDT" in sm._retrace_orders, "الافتراضي: الحقيقي يسلّح أمرًا ارتداديًا"
+        assert bought == []
+        # العلم مطفأ ⇒ السلوك القديم (شراء فوري)
+        sm._retrace_orders.clear()
+        monkeypatch.setattr(sm, "SCALP_REAL_RETRACE", False)
+        sm._cooldowns["SCALP_FLOW"].clear()
+        sm._scan_cycle()
+        assert bought and len(bought[0]) == 2

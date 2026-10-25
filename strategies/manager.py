@@ -60,6 +60,9 @@ def _flag(name: str, default: str = "1") -> bool:
 SCALP_ENABLED = _flag("SCALP_ENABLED")
 # [EL2.3.0] علم البيئة لاستراتيجية التدفق — SCALP_S1_ENABLED اسم موروث لتوافق render.yaml
 S1_ENABLED = _flag("SCALP_S1_ENABLED")
+# [EL2.4.1][F3] توحيد سلوك الارتدادي: الوضع الحقيقي يسلّح الأوامر الارتدادية كالورقي
+# (لا شراء قمة الاندفاع — النسخة التي خسرت في BT-LAB). SCALP_REAL_RETRACE=0 يعيد القديم.
+SCALP_REAL_RETRACE = _flag("SCALP_REAL_RETRACE", "1")
 
 STRATEGY_NAMES = ("SCALP_FLOW",)
 # [EL2.3.0] قرار الحاكم: حذف كل الاستراتيجيات عدا موجات إليوت والتدفق —
@@ -391,8 +394,17 @@ def _open_position(sig: ScalpSignal, fill_price: Optional[float] = None) -> bool
     real = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
     if fill_price is not None:
         if real:
-            return _open_position(sig)      # الحقيقي: ملء فوري كالقديم (لا أوامر ارتدادية)
-        fill = float(fill_price)
+            # [EL2.4.1][F3] ملء ارتدادي حقيقي: حارس بدل ملاحقة القديم — لا شراء إن ابتعد
+            # السعر عن الحد أو كسر الوقف المرجعي (تفادي الشراء في الومضة أو فوق مقبرة الوقف)
+            live = _hf("get_live_price", sig.symbol)
+            atr_ref = float(sig.meta.get("atr5") or 0)
+            tol = cfg.entry_chase_atr * (atr_ref if atr_ref > 0 else float(fill_price))
+            if live is None or float(live) <= float(sig.sl) or (float(live) - float(fill_price)) > tol:
+                _reject(sig.strategy, "ملء ارتدادي حقيقي: السعر ابتعد أو كسر الوقف")
+                return False
+            fill = float(live)
+        else:
+            fill = float(fill_price)
     else:
         fill = _hf("get_live_price", sig.symbol) or sig.entry_ref
         # حارس الملاحقة: الابتعاد عن إغلاق القرار بحدّ ATR يعني أن الفرصة راحت — لا دخول
@@ -533,14 +545,10 @@ def _manage_retrace(sym: str, ctx: ScalpContext) -> None:
     if lo > od["limit"] or close < od["limit"]:
         return
     fill = min(od["limit"], op)               # فجوة تحت الحد = ملء بالفتح (أفضل)
-    # بوابات إعادة الفحص لحظة الملء — السياق تغيّر خلال الانتظار
-    ok, why = True, ""
-    if _scalp_open_count() >= cfg.max_total_open:
-        ok, why = False, "سقف صفقات السكالب المفتوحة"
-    elif _hf("symbol_has_active", sym):
-        ok, why = False, "صفقة نشطة على الرمز"
-    elif _daily_loss_block(od["strategy"]):
-        ok, why = False, "قاطع خسارة اليوم"
+    # بوابات إعادة الفحص لحظة الملء — [EL2.4.1][F3] نفس بوابات الدخول كاملةً:
+    # زر التداول وقاطع المخاطر ومفتاح الاستراتيجية والسقوف والمشغول والتبريد والقاطع اليومي.
+    # لا تعارض مع التبريد لأنه لا يُضبط عند التسلح.
+    ok, why = _entry_gates(od["strategy"], sym)
     if not ok:
         _retrace_orders.pop(sym, None)
         _cooldown_set(od["strategy"], sym, cfg.cancel_cooldown_sec)
@@ -597,9 +605,10 @@ def _scan_cycle() -> Dict[str, int]:
             if not sig.side == "LONG":            # حارس سبوت صريح
                 _reject(name, "سبوت: لا بيع مكشوف")
                 continue
-            # [EL2.4.0] لا مطاردة شمعة الانفجار — أمر ارتدادي (ورقي) بدل الشراء الفوري
+            # [EL2.4.0] لا مطاردة شمعة الانفجار — أمر ارتدادي بدل الشراء الفوري
+            # [EL2.4.1][F3] الوضع الحقيقي يسلّح أيضًا (SCALP_REAL_RETRACE=1) — توحيد السلوك
             real_mode = bool(HOST.get("is_real_mode") and HOST["is_real_mode"]())
-            if cfg.retrace_atr > 0 and not real_mode:
+            if cfg.retrace_atr > 0 and (not real_mode or SCALP_REAL_RETRACE):
                 if _arm_retrace(sig):
                     stats["signals"] += 1
                     break                         # رمز واحد = أمر واحد بالدورة
