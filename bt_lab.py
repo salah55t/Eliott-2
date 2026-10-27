@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import pickle
 import sys
 import time
 from collections import deque
@@ -124,7 +125,149 @@ VARIANTS: Dict[str, Dict[str, Any]] = {
                      "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
                      "trail": {"atr": 1.0}},
            "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    # ── حملة 1025 (EL2.4.2): عامل واحد حول F1 في كل تجربة ──
+    # سقف المخاطرة البنيوية للموجات
+    "N1": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 1.6, "pending_candles": 10}},
+    "N2": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.4, "pending_candles": 10}},
+    # صلاحية المعلق
+    "N3": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 8}},
+    "N4": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 12}},
+    # تتبع السكالب بعد الجزئي
+    "N5": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 0.8}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    "N6": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.2}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    # صلاحية أمر الارتداد
+    "N7": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 6, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    "N8": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 10, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    # جودة هدف الموجات (أرضية R:R للهدف)
+    "N9": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10,
+                       "tp_min_rr": 0.7}},
+    # حظر السلاسل للسكالب (درس S10)
+    "N10": {"scalp": {"di_gate": True, "htf_gate": True,
+                      "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                      "trail": {"atr": 1.0},
+                      "blackout": {"losses": 3, "hours": 12}},
+            "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    # تتبع الموجات بعد +1R (درس E9)
+    "N11": {"scalp": {"di_gate": True, "htf_gate": True,
+                      "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                      "trail": {"atr": 1.0}},
+            "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10,
+                        "trail": {"atr": 2.5}}},
+    # أرضية وقف السكالب من الملء (درس S9)
+    "N12": {"scalp": {"di_gate": True, "htf_gate": True,
+                      "retrace": {"atr": 0.60, "expiry": 8, "confirm": True,
+                                  "sl_floor_atr": 0.5},
+                      "trail": {"atr": 1.0}},
+            "elliott": {"sl_cap_atr": 2.0, "pending_candles": 10}},
+    # بروب حدودي لصلاحية المعلق — N4 (12) فاز 5/5؛ هل القمة أبعد؟
+    "N13": {"scalp": {"di_gate": True, "htf_gate": True,
+                      "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                      "trail": {"atr": 1.0}},
+            "elliott": {"sl_cap_atr": 2.0, "pending_candles": 14}},
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# تجميع شموع 15m إلى فريم كشف أعلى (30m/1h) — شموع مكتملة حصرًا
+# ─────────────────────────────────────────────────────────────────────────────
+
+# فريمات الكشف المدعومة (15m أصلي — 30m/1h تجميعًا من 15m): 30m غير موجود في TF_SEC للمحرك
+DET_TF_SEC = {"15m": 900, "30m": 1800, "1h": 3600}
+
+
+def _aggregate_tf(df: pd.DataFrame, tf_ms: int) -> pd.DataFrame:
+    """تجميع OHLCV من 15m إلى فريم أعلى (مضاعف صحيح) — الدلو الجزئي الأخير يُسقط."""
+    base_ms = 900_000
+    per_bucket = tf_ms // base_ms
+    if per_bucket <= 1:
+        return df
+    g = df.groupby(df["timestamp"] // tf_ms, sort=True)
+    agg = g.agg(timestamp=("timestamp", "first"), open=("open", "first"),
+                high=("high", "max"), low=("low", "min"), close=("close", "last"),
+                volume=("volume", "sum"), _n=("timestamp", "size"))
+    agg = agg[agg["_n"] == per_bucket].drop(columns="_n")
+    if "taker_base" in df.columns:
+        agg["taker_base"] = g["taker_base"].sum()[agg.index]
+    return agg.reset_index(drop=True)
+
+
+class LabDataStore(bt.DataStore):
+    """كاش المختبر: مدّ الذيل الناقص جراحيًا بدل إعادة جلب المدى كله (كل نداء
+    له end_ms أحدث)، مع تراجع بطيء أمام 429 (وزن باينانس 6000/دقيقة)."""
+
+    def fetch(self, symbol: str, tf: str, days: int, end_ms: int):
+        tf_ms = bt.TF_SEC[tf] * 1000
+        want_start = (end_ms - days * 86400_000) // tf_ms * tf_ms
+        path = os.path.join(bt.CACHE_DIR, f"{symbol.replace('/', '')}_{tf}.pkl")
+        df = None
+        if not self.refresh and os.path.exists(path):
+            try:
+                with open(path, "rb") as fh:
+                    df = pickle.load(fh)
+            except Exception:
+                df = None
+        if df is None or len(df) == 0:
+            return super().fetch(symbol, tf, days, end_ms)
+        c0, c1 = int(df["timestamp"].iloc[0]), int(df["timestamp"].iloc[-1])
+        if c0 <= want_start and c1 >= end_ms - tf_ms:
+            return df[(df["timestamp"] >= want_start)
+                      & (df["timestamp"] < end_ms)].reset_index(drop=True)
+        parts = []
+        if c0 > want_start:
+            parts.append(self._remote(symbol, tf, want_start, c0))
+        parts.append(df)
+        if c1 < end_ms - tf_ms:
+            parts.append(self._remote(symbol, tf, c1 + tf_ms, end_ms))
+        full = pd.concat(parts, ignore_index=True)
+        full = full.drop_duplicates("timestamp").sort_values("timestamp")
+        full = full[(full["timestamp"] >= want_start)
+                    & (full["timestamp"] + tf_ms <= end_ms)].reset_index(drop=True)
+        try:
+            with open(path, "wb") as fh:
+                pickle.dump(full, fh)
+        except Exception:
+            pass
+        return full
+
+    def _remote(self, symbol: str, tf: str, start_ms: int, end_ms: int):
+        last = None
+        for attempt in range(6):
+            try:
+                return self._fetch_remote(symbol, tf, start_ms, end_ms)
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                wait = min(45.0, 6.0 * (attempt + 1))
+                print(f"  [بيانات] {symbol} {tf}: {str(exc)[:60]} — انتظار {wait:.0f}ث",
+                      flush=True)
+                time.sleep(wait)
+        raise last
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,36 +576,9 @@ class LabElliottSim(bt.ElliottSim):
                 if trail > pos.entry:                          # أرضية BE — التتبع لا ينزل تحت الدخول
                     pos.sl = max(pos.sl, trail)
 
-    def manage_pending(self, sym: str, t_ms: int, candle: dict) -> None:
-        pend = self.pendings.get(sym)
-        if pend is None:
-            return
-        close, lo = candle["close"], candle["low"]
-        if close < pend.p0:
-            del self.pendings[sym]
-            self.cooldowns[sym] = t_ms + int(bt.SYMBOL_COOLDOWN_SEC * 1000)
-            self.stats["ell_pending"]["إبطال بنيوي"] = \
-                self.stats["ell_pending"].get("إبطال بنيوي", 0) + 1
-            return
-        if t_ms > pend.expires_ms:
-            del self.pendings[sym]
-            self.cooldowns[sym] = t_ms + int(bt.SYMBOL_COOLDOWN_SEC * 1000)
-            self.stats["ell_pending"]["انتهاء"] = self.stats["ell_pending"].get("انتهاء", 0) + 1
-            return
-        if lo <= pend.entry:
-            fill = pend.entry if close >= pend.entry else close
-            del self.pendings[sym]
-            pos = bt.Position(kind="ELLIOTT", symbol=sym, qty=pend.qty, entry=fill,
-                              sl=pend.sl, tp1=pend.tp1, tp2=pend.tp2,
-                              tp_final=pend.tp_final, opened_ms=t_ms,
-                              meta={"qty0": pend.qty, "rr_planned": pend.rr_planned,
-                                    "p0": pend.p0, "r1": fill - pend.sl,
-                                    "tp1": pend.tp1, "tp2": pend.tp2, "basis": pend.basis})
-            self.book.balance -= self.book.leg_fee(pend.qty * fill)
-            pos.meta["pnl_acc"] = -self.book.leg_fee(pend.qty * fill)
-            self.positions[sym] = pos
-            self.stats["ell_pending"]["ملء"] = self.stats["ell_pending"].get("ملء", 0) + 1
-            self.manage_open(sym, t_ms, candle)
+        # [EL2.4.1][F1] manage_pending غير معاد تعريفه هنا عمدًا: وراثة النسخة الصادقة
+        # من المحرك المرجعي (fill=min(entry, open) + إغلاق فوري عند فجوة تحت الوقف)
+        # — مختبر ومحرك يحكمان بمنطق واحد حرفيًا.
 
     def detect(self, sym: str, t_ms: int, df15: pd.DataFrame, rows5: List[dict],
                week_hi: Optional[float], busy_extra: Optional[set] = None) -> None:
@@ -495,7 +611,7 @@ class LabElliottSim(bt.ElliottSim):
         self.pendings[sym] = bt.PendingElliott(
             symbol=sym, entry=entry, sl=sl, tp1=tp1, tp2=tp2, tp_final=tp_final,
             p0=float(best.pivot_prices[0]), qty=qty, created_ms=t_ms,
-            expires_ms=t_ms + self._pending_candles * bt.TF_SEC[bt.ENTRY_TF] * 1000,
+            expires_ms=t_ms + self._pending_candles * int(self.var.get("_det_ms") or bt.TF_SEC[bt.ENTRY_TF]),
             rr_planned=rr_planned, basis=basis)
         self.stats["ell_pending"]["وُلد"] = self.stats["ell_pending"].get("وُلد", 0) + 1
 
@@ -506,8 +622,15 @@ class LabElliottSim(bt.ElliottSim):
 
 def run_lab(args) -> Dict[str, Any]:
     var = VARIANTS.get(args.variant, {})
-    sc_var = var.get("scalp", {})
-    el_var = var.get("elliott", {})
+    sc_var = dict(var.get("scalp", {}))          # نسخ — لا تلويث VARIANTS المشتركة
+    el_var = dict(var.get("elliott", {}))
+    # فريم كشف الموجات — 15m (الإنتاج) أو 30m/1h (تجميع من 15m بلا بيانات إضافية)
+    det_tf = getattr(args, "det_tf", "15m") or "15m"
+    det_ms = DET_TF_SEC[det_tf] * 1000
+    if det_tf != "15m" and el_var.get("pending_candles"):
+        # صلاحية المعلق زمنية (10×15m = 2.5س) — تُقاس بالزمن لا بعدد الشموع
+        el_var["pending_candles"] = max(1, int(el_var["pending_candles"] / (det_ms / bt.TF_SEC["15m"]) + 0.5))
+    el_var["_det_ms"] = det_ms
     # رافعات مستوى الثوابت (موجات) — تُثبَّت قبل الحلقة
     if el_var.get("tp_min_rr"):
         bt.TP_MIN_RR = float(el_var["tp_min_rr"])
@@ -519,6 +642,10 @@ def run_lab(args) -> Dict[str, Any]:
     t0_wall = time.time()
     symbols = bt.load_symbols(args.symbols)
     end_ms = int(time.time() * 1000) // (bt.TF_SEC["5m"] * 1000) * (bt.TF_SEC["5m"] * 1000)
+    if getattr(args, "end_days_ago", 0):
+        # إزاحة نافذة المحاكاة إلى الماضي (نوافذ walk-forward المتقطعة) —
+        # 86400_000 مضاعف صحيح لدورة 5m فبقاء المحاذاة مضمون
+        end_ms -= int(args.end_days_ago) * 86400_000
     fetch_days = args.days + 8
     sim_start_ms = end_ms - args.days * 86400_000
 
@@ -528,18 +655,19 @@ def run_lab(args) -> Dict[str, Any]:
     print(f"  موجات: {el_var or 'إنتاج'}")
     print(f"═" * 78)
 
-    ds = bt.DataStore(refresh=args.refresh)
+    ds = LabDataStore(refresh=args.refresh)
     data: Dict[str, Dict[str, Any]] = {}
     for i, sym in enumerate(symbols, 1):
         df5 = ds.fetch(sym, "5m", fetch_days, end_ms)
         df15 = ds.fetch(sym, "15m", fetch_days, end_ms)
-        if len(df5) < 200 or len(df15) < 60:
+        df_det = df15 if det_tf == "15m" else _aggregate_tf(df15, det_ms)
+        if len(df5) < 200 or len(df15) < 60 or len(df_det) < 30:
             print(f"  [تخطٍ] {sym}: بيانات غير كافية")
             continue
-        data[sym] = {"df5": df5, "df15": df15,
+        data[sym] = {"df5": df5, "df15": df15, "df_det": df_det,
                      "day_hi": bt.daily_highs_from_15m(df15, fetch_days),
                      "htf": HTF1h(df5) if (sc_var.get("htf_gate") or el_var.get("htf_gate")) else None}
-        print(f"  [{i}/{len(symbols)}] {sym}: {len(df5)}×5m {len(df15)}×15m")
+        print(f"  [{i}/{len(symbols)}] {sym}: {len(df5)}×5m {len(df15)}×15m ({len(df_det)}×{det_tf})")
     symbols = [s for s in symbols if s in data]
     if not symbols:
         raise SystemExit("لا رموز ببيانات كافية")
@@ -555,6 +683,7 @@ def run_lab(args) -> Dict[str, Any]:
         d5, d15 = data[sym]["df5"], data[sym]["df15"]
         data[sym]["idx5"] = {int(ts): j for j, ts in enumerate(d5["timestamp"].values)}
         data[sym]["idx15"] = {int(ts): j for j, ts in enumerate(d15["timestamp"].values)}
+        data[sym]["idx_det"] = {int(ts): j for j, ts in enumerate(data[sym]["df_det"]["timestamp"].values)}
 
     stats: Dict[str, Any] = {
         "scalp_cycles": 0, "scalp_signals": 0, "partials_scalp": 0,
@@ -576,6 +705,7 @@ def run_lab(args) -> Dict[str, Any]:
 
     dq5: Dict[str, deque] = {s: deque(maxlen=220) for s in symbols}
     dq15: Dict[str, deque] = {s: deque(maxlen=bt.DETECT_WINDOW_BARS + 20) for s in symbols}
+    dq_det: Dict[str, deque] = {s: deque(maxlen=bt.DETECT_WINDOW_BARS + 20) for s in symbols}
 
     steps = list(range(start_ms, end_ms, bt.TF_SEC["5m"] * 1000))
     print(f"\nالحلقة: {len(steps):,} دورة 5m × {len(symbols)} رمزًا\n")
@@ -584,6 +714,7 @@ def run_lab(args) -> Dict[str, Any]:
     for n, T in enumerate(steps):
         book.roll_day(T)
         boundary15 = (T % (bt.TF_SEC["15m"] * 1000) == 0)
+        boundary_det = (T % det_ms == 0)
         hour_boundary = (T % 3600000 == 0)
         for sym in symbols:
             d = data[sym]
@@ -612,18 +743,33 @@ def run_lab(args) -> Dict[str, Any]:
                                                if "taker_base" in d["df15"].columns else None)}
                     dq15[sym].append(candle15)
 
+            # شمعة فريم كشف الموجات (15m/30m/1h) — مسار مستقل عن تأكيد السكالب 15m
+            candle_det = None
+            if boundary_det:
+                kD = d["idx_det"].get(T - det_ms)
+                if kD is not None:
+                    rD = d["df_det"].iloc[kD]
+                    candle_det = {"ts": float(rD["timestamp"]), "open": float(rD["open"]),
+                                  "high": float(rD["high"]), "low": float(rD["low"]),
+                                  "close": float(rD["close"]),
+                                  "volume": float(rD["volume"]),
+                                  "taker_base": (float(rD["taker_base"])
+                                                 if "taker_base" in d["df_det"].columns else None)}
+                    dq_det[sym].append(candle_det)
+
             rows5 = list(dq5[sym])[-160:]
             rows15 = list(dq15[sym])[-bt.SCAN_K15_LIMIT:]
+            rows_det = list(dq_det[sym])[-bt.SCAN_K15_LIMIT:]
 
-            if boundary15 and elliott and candle15 is not None:
-                if rows15:
+            if boundary_det and elliott and candle_det is not None:
+                if rows_det:
                     elliott.atr15_map[sym] = ind.atr(
-                        [r["high"] for r in rows15], [r["low"] for r in rows15],
-                        [r["close"] for r in rows15], 14)
-                elliott.manage_open(sym, T, candle15, rows15=rows15)
-                elliott.manage_pending(sym, T, candle15)
-                dfw = d["df15"]
-                lo_idx = d["idx15"].get(T - bt.TF_SEC["15m"] * 1000, 0)
+                        [r["high"] for r in rows_det], [r["low"] for r in rows_det],
+                        [r["close"] for r in rows_det], 14)
+                elliott.manage_open(sym, T, candle_det, rows15=rows_det)
+                elliott.manage_pending(sym, T, candle_det)
+                dfw = d["df_det"]
+                lo_idx = d["idx_det"].get(T - det_ms, 0)
                 a = max(0, lo_idx - bt.DETECT_WINDOW_BARS + 1)
                 win = dfw.iloc[a:lo_idx + 1]
                 if len(win) >= 60:
@@ -679,7 +825,9 @@ def run_lab(args) -> Dict[str, Any]:
 
     result = bt.summarize(args, symbols, scalp_syms, book, stats, eq, ds.provider_used,
                           start_ms, end_ms, time.time() - t0_wall)
-    result["variant"] = {"name": args.variant, "scalp": sc_var, "elliott": el_var}
+    result["period"]["end_offset_days"] = int(getattr(args, "end_days_ago", 0) or 0)
+    result["variant"] = {"name": args.variant, "scalp": sc_var, "elliott": el_var,
+                         "det_tf": det_tf}
     result["scalp"]["orders"] = stats.get("scalp_orders", {})
     result["scalp"]["gates"] = stats.get("scalp_gates", {})
     result["scalp"]["blackouts"] = stats.get("scalp_blackouts", 0)
@@ -692,8 +840,12 @@ def run_lab(args) -> Dict[str, Any]:
 def main():
     ap = argparse.ArgumentParser(description="مختبر تجارب الباك تاست BT-LAB")
     ap.add_argument("--variant", default="BASE", choices=sorted(VARIANTS.keys()))
+    ap.add_argument("--det-tf", default="15m", choices=["15m", "30m", "1h"],
+                    help="فريم كشف الموجات (السكالب 5m والمؤشرات الأعلى كما هي)")
     ap.add_argument("--symbols", default="12")
     ap.add_argument("--days", type=int, default=45)
+    ap.add_argument("--end-days-ago", type=int, default=0,
+                    help="إزاحة نهاية النافذة إلى الماضي بالأيام — لنوافذ walk-forward المتقطعة")
     ap.add_argument("--balance", type=float, default=10000.0)
     ap.add_argument("--no-flow-filter", action="store_true")
     ap.add_argument("--scalp-only", action="store_true")
