@@ -586,8 +586,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.4.3"
-        assert panel.BOT_VERSION == "EL2.4.3"
+        assert vnz.BOT_VERSION == "EL2.4.4"
+        assert panel.BOT_VERSION == "EL2.4.4"
 
     def test_render_yaml_carries_v9_layer_keys(self):
         with open("render.yaml", "r", encoding="utf-8") as fh:
@@ -647,4 +647,4 @@ class TestDeploymentAndBoundaries:
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0
         assert vnz.PENDING_MAX_CANDLES == 12          # [EL2.4.0] درس باك تاست E7/E8
-        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3
+        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 2  # [EL2.4.4] كان 3

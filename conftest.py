@@ -87,6 +87,20 @@ def _isolate_rate_guard():
         g._window.extend(saved_window)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_btc_regime(request, monkeypatch):
+    """[EL2.4.4] عزل بوابة نطاق السوق عن الشبكة في كل الاختبارات: السوق الأم صاعد
+    (تُسمح LONG) — نفس عقد _isolate_weekly_high/_isolate_elliott_flow_filter.
+    الاختبار المتخصص (test_el244_regime_gate.py) لا يُلمس ليفحص المنطق الحقيقي
+    والكاش والفشل الآمن على بيانات صناعية (صفر شبكة)."""
+    import vnz
+    if request.module.__name__ == "test_el244_regime_gate":
+        yield
+        return
+    monkeypatch.setattr(vnz, "btc_regime_up", lambda: True, raising=False)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_default_sqlite_schema():
     """يضمن وجود جداول القاعدة الافتراضية قبل أي اختبار يلمسها بلا مصباح."""

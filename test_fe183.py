@@ -78,7 +78,7 @@ class TestRelaxedGates:
         assert vnz.structure_fresh(_StubSetup(5), [{"close": 1.0}] * 10) is True
 
     def test_pending_validity_extended(self):
-        # [EL2.4.3] صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 3 ساعات
+        # [EL2.4.4] صلاحية الأمر المعلق = PENDING_MAX_CANDLES × شمعة الكشف — على 15m صارت 3 ساعات
         # (حملة 1025: 12 فازت على 10 في 5/5 نوافذ، والقمة عند 12 — درس E7/E8 قبله: 6→10)
         assert vnz.SIGNAL_TIMEFRAME in vnz.TF_SECONDS
         expected_sec = vnz.PENDING_MAX_CANDLES * vnz.TF_SECONDS[vnz.SIGNAL_TIMEFRAME]
@@ -95,8 +95,8 @@ class TestProtectedBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.4.3"
-        assert panel.BOT_VERSION == "EL2.4.3"
+        assert vnz.BOT_VERSION == "EL2.4.4"
+        assert panel.BOT_VERSION == "EL2.4.4"
 
     def test_render_yaml_carries_new_values(self):
         # مصدر الحقيقة على Render — يجب أن يحمل القيم الجديدة لا الافتراضيات القديمة
@@ -114,4 +114,4 @@ class TestProtectedBoundaries:
         assert vnz.MAX_ENTRY_DISTANCE_PCT == 1.5      # لا مطاردة
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400        # لا إعادة إنشاء حرفية
         assert getattr(vnz, "RR_NET_MIN", 0.3) == 0.3 # بوابة rr_net
-        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3
+        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 2  # [EL2.4.4] كان 3

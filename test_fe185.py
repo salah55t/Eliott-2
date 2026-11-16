@@ -230,8 +230,8 @@ class TestDeploymentAndBoundaries:
 
     def test_version_bumped_everywhere(self):
         import panel
-        assert vnz.BOT_VERSION == "EL2.4.3"
-        assert panel.BOT_VERSION == "EL2.4.3"
+        assert vnz.BOT_VERSION == "EL2.4.4"
+        assert panel.BOT_VERSION == "EL2.4.4"
 
     def test_panel_shows_real_error(self):
         # بطاقة اللوحة تعرض نص الخطأ الحقيقي بجوار «فشل الاتصال»
@@ -257,7 +257,7 @@ class TestDeploymentAndBoundaries:
         assert vnz.RR_NET_MIN == 0.3                  # أرضية R:R الصافي
         assert vnz.SYMBOL_COOLDOWN_SEC == 5400.0      # تبريد الرمز
         assert vnz.PENDING_MAX_CANDLES == 12          # [EL2.4.0] درس باك تاست E7/E8           # صلاحية المعلق
-        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 3    # سقف العنقود
+        assert vnz.CLUSTER_MAX_SAME_DIRECTION == 2    # [EL2.4.4] سقف العنقود (كان 3)
         assert vnz.KEEP_ALIVE_INTERVAL_SEC == 60.0    # نبضة الدقيقة
         assert vnz.SCAN_TOP_N == 30                   # قائمة FE1.8.4
         assert vnz.IDLE_RESCAN_MIN_GAP_SEC == 2700.0  # إعجال FE1.8.4

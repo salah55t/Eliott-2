@@ -229,7 +229,7 @@ from utils.logger import get_logger, fmt_price
 #   (لا بيع ممكن أصلًا): تقييم كامل الكمية بسعر الخروج ورسوم الشراء فقط. الصيغة تعادل القديمة حرفيًا عند بلا قواعد أو كمية مطابقة (regression-safe) والصفوف الحقيقية
 #   لم تُمس. (3) الرصيد الورقي 100$ (PAPER_BALANCE في render.yaml) مع إعادة ضبط لمرة واحدة عند الإقلاع (_reset_paper_100 بعلم paper_reset_100_el242): إلغاء المعلق
 #   الورقي وتسوية المفتوح عند سعر دخوله بلا ربح/خسارة (حد محاسبي لحدود المحاكاة لا صفقة — قواطع المخاطر لا تُغذى) والصفوف الحقيقية لا تُمس.
-BOT_VERSION = "EL2.4.3"
+BOT_VERSION = "EL2.4.4"
 STRATEGY_NAME = "Elliott_Fibonacci"
 REPO_URL = "https://github.com/salah55t/fibo-elio"
 
@@ -366,7 +366,14 @@ KICK_MIN_GAP_SEC = float(os.getenv("KICK_MIN_GAP_SEC", "90"))                  #
 # [FE1.9.0] بوابة عمق التصحيح: التراجع الذي يبتلع ≥78.6% من الموجة يقترب من P0 —
 # أمر معلق عنده يموت بأول شمعة غالبًا (زومبي يقطس الخانة). رفض مبكر مصنّف (0 يعطل)
 DEEP_RETRACE_BLOCK_PCT = float(os.getenv("DEEP_RETRACE_BLOCK_PCT", "0.786"))
-CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "3")) # سقف الإشارات الصاعدة النشطة معًا — لا 5 لونجات مترابطة (0 يعطل)
+CLUSTER_MAX_SAME_DIRECTION = int(os.getenv("CLUSTER_MAX_SAME_DIRECTION", "2")) # [EL2.4.4] 3←2 — درس نافذة الحي: 3 فتحات في 30د (4 نوفمبر) خسرت -70.83$؛ سقف العنقود يحمي من رهان بيتا مترابط (0 يعطل)
+# [EL2.4.4] بوابة نطاق السوق «مبدأ السوق الأم» (FIX-1116 — حملة إصلاح خسارة الحي):
+# بيتك SuperTrend(10,3.0) على 1h — لا LONG (موجات أو سكالب) والسوق الأم هابط.
+# الفائز الموثق: BT3.1.0 (صفر فترات خاسرة عبر 4 فترات × نظامين سعريين) + حملة FIX-1116
+# (حي -322.49←-62.98، 45ي -341.13←+60.54، DD ≤ 0.65% بكل الفترات). فشل الجلب =
+# مجهول = يُسمح (fail-open) — البوابة فلتر جودة لا نقطة فشل.
+BTC_REGIME_GATE_WAVES = os.getenv("BTC_REGIME_GATE_WAVES", "1").strip().lower() not in ("0", "false", "no", "off")
+BTC_REGIME_GATE_SCALP = os.getenv("BTC_REGIME_GATE_SCALP", "1").strip().lower() not in ("0", "false", "no", "off")
 # [FE1.7.0] سقوف التعرض الورقي — كانت الورقي يفتح مركزًا بقيمة 2.5× الرصيد (مخاطرة 1%
 # على وقف ضيق = رافعة ضمنية) بينما الحقيقي مقيد بـ REAL_MAX_NOTIONAL_USDT — الإحصاءات
 # الورقية لن تكون تنبؤية للحقيقي دون سقوف مماثلة.
@@ -531,6 +538,7 @@ scan_stats: Dict[str, Any] = {
     "cycles": 0, "scanned": 0, "setups_valid": 0, "setups_bull_traded": 0,
     "setups_bear_seen": 0, "rejected_active_limit": 0, "rejected_symbol_busy": 0,
     "rejected_htf_bias": 0,  # [FE1.6.0] إشارات صاعدة مرفوضة لانحياز هابط قوي على الفريم الأعلى
+    "rejected_btc_regime": 0,  # [EL2.4.4] مرفوضات بوابة نطاق السوق (بيتك ST1h هابط)
     "rejected_stale_premise": 0,  # [FE1.6.2] إشارات من محاور تاريخية: الإغلاق الحالي دون P0 (فرضية ماتت)
     "rejected_deep_retrace": 0,   # [FE1.9.0] تصحيح عميق يبتلع ≥78.6% من الموجة — أمر عنده يموت بأول شمعة
     "momentum_kicks": 0,          # [FE1.9.0] إيقاظات نبض الحركة — كشف لحظي بدل انتظار إغلاق الشمعة
@@ -2354,6 +2362,7 @@ def scalp_host() -> Dict[str, Any]:
         "symbol_has_active": symbol_has_active,
         "get_paper_balance": get_paper_balance,
         "paper_exposure_remaining": paper_exposure_remaining,  # [EL2.4.1][F9] سقف التعرض المشترك
+        "btc_regime_up": btc_regime_up,        # [EL2.4.4] بوابة نطاق السوق للسكالب
         "paper_floor_qty": _paper_floor_qty,   # [EL2.4.2] أرضية الكمية على خطوة باينانس
         "fee_rate": FEE_RATE, "deviation_threshold": DEVIATION_THRESHOLD,
         "zigzag_pivots": zigzag_pivots,
@@ -5292,6 +5301,59 @@ def htf_bias(symbol: str) -> Optional[bool]:
     return bias
 
 
+# ── [EL2.4.4] بوابة نطاق السوق — «مبدأ السوق الأم» ──────────────────────────
+# بيتك SuperTrend(10,3.0) على 1h من شموع مغلقة حصرًا (الشمعة الجارية تُسقط).
+# كاش مفاتيحه حدود الساعة (int(now//3600)) — إعادة حساب مرة واحدة كل ساعة
+# مطابقة لآلية HTF1h في المختبر (advance عند إغلاق شمعة الساعة).
+# True = صاعد (تُسمح LONG) | False = هابط (لا LONG) | None = مجهول (fail-open)
+
+_btc_regime_lock = threading.Lock()
+_btc_regime_cache: Dict[str, Any] = {}   # {hour, dir} — مفتاح واحد (بيتك فقط)
+BTC_REGIME_SYMBOL = "BTC/USDT"
+
+
+def btc_regime_up() -> Optional[bool]:
+    """[EL2.4.4] اتجاه السوق الأم: SuperTrend(10,3.0) على 1h لبيتك — الفائز الموثق
+    BT3.1.0 + حملة FIX-1116 (حي -322.49←-62.98، 45ي -341.13←+60.54، DD ≤ 0.65%).
+    فشل الجلب/بيانات ناقصة = None = fail-open (البوابة فلتر جودة لا نقطة فشل).
+    وزن REST: نداء واحد كل ساعة (كاش مفاتيحه حدود الساعة)."""
+    now = time.time()
+    hour_key = int(now // 3600)
+    with _btc_regime_lock:
+        if _btc_regime_cache.get("hour") == hour_key and "dir" in _btc_regime_cache:
+            return _btc_regime_cache["dir"]
+    dir_val: Optional[float] = None
+    try:
+        from strategies import indicators as _reg_ind  # [نمط المشروع] الاستيراد داخل الدالة
+        df = fetch_ohlcv_df(BTC_REGIME_SYMBOL, "1h", limit=200, min_candles=60)
+        if df is not None and len(df) >= 20 and "timestamp" in df.columns:
+            # [EL2.4.4] عمود fetch_ohlcv_df المعياري timestamp (datetime UTC) —
+            # نحوّله إلى ms للمقارنة؛ «ts» الخام يسقط في REQUIRED_COLS
+            ts = (df["timestamp"].astype("int64") // 1_000_000).to_numpy()
+            # شموع مغلقة حصرًا — الشمعة الجارية (فتحها + ساعة > الآن) تُسقط
+            closed_n = int(((ts + 3600_000) <= int(now * 1000)).sum())
+            if closed_n >= 20:
+                df = df.iloc[:closed_n]
+            highs = df["high"].to_numpy(dtype=float).tolist()
+            lows = df["low"].to_numpy(dtype=float).tolist()
+            closes = df["close"].to_numpy(dtype=float).tolist()
+            st = _reg_ind.supertrend(highs, lows, closes, 10, 3.0)
+            if st and st.get("dir"):
+                dir_val = float(st["dir"])
+    except Exception as exc:
+        logger.debug("تعذر حساب نطاق السوق الأم (بيتك 1h): %s", exc)
+        dir_val = None
+    out: Optional[bool] = None if dir_val is None else (dir_val == 1.0)
+    with _btc_regime_lock:
+        # فشل الجلب لا يُخزّن — النداء القادم داخل نفس الساعة يعيد المحاولة
+        if out is not None:
+            _btc_regime_cache["hour"] = hour_key
+            _btc_regime_cache["dir"] = out
+    if out is False:
+        logger.info("نطاق السوق الأم هابط — بيتك SuperTrend(10,3.0) 1h سالب، لا LONG (موجات/سكالب)")
+    return out
+
+
 def premise_alive(setup: DetectedSetup, last_close: float) -> bool:
     """[FE1.6.2] بوابة حيوية الفرضية لحظة الإنشاء (اقتباس روح is_wave_invalidated):
     الإعداد الصاعد صالح فقط إذا كان الإغلاق الحالي فوق أصل الموجة 1 (P0) —
@@ -5630,6 +5692,12 @@ def scan_cycle() -> None:
                         _set_reject_reason(symbol, "للرمز إشارة نشطة بالفعل")
                         with scan_stats_lock:
                             scan_stats["rejected_symbol_busy"] += 1
+                    elif BTC_REGIME_GATE_WAVES and btc_regime_up() is False:
+                        # [EL2.4.4] مبدأ السوق الأم — لا موجات طويلة والسوق الأم هابط
+                        # (فائز BT3.1.0 + FIX-1116؛ fail-open عند المجهول — الشرط is False فقط)
+                        _set_reject_reason(symbol, "نطاق السوق الأم هابط — بيتك ST(10,3.0) 1h سالب")
+                        with scan_stats_lock:
+                            scan_stats["rejected_btc_regime"] += 1
                     elif CLUSTER_MAX_SAME_DIRECTION > 0 and same_direction_active("BULLISH") >= CLUSTER_MAX_SAME_DIRECTION:
                         # [FE1.7.0] عنقود اتجاهي — 5 لونجات مترابطة تُضرب بشمعة BTC واحدة
                         n_cluster = same_direction_active("BULLISH")

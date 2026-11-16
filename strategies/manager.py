@@ -352,6 +352,11 @@ def _entry_gates(strategy: str, symbol: str) -> Tuple[bool, str]:
         return False, "تبريد الرمز بعد صفقة سابقة"
     if _daily_loss_block(strategy):
         return False, "قاطع خسارة اليوم لهذه الاستراتيجية"
+    # [EL2.4.4] مبدأ السوق الأم — لا سكالب LONG والسوق الأم هابط (فائز FIX-1116).
+    # _hf ينفّذ الجسر فورًا: False = هابط (رفض)، True = صاعد (تمر)، None/غياب =
+    # مجهول = fail-open — سلوك اليوم دون تغيير (نمط F9)
+    if _hf("btc_regime_up") is False:
+        return False, "نطاق السوق الأم هابط — بيتك ST(10,3.0) 1h سالب"
     return True, ""
 
 

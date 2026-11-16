@@ -238,7 +238,7 @@ class TestElliottSlCap:
     def test_constants(self):
         assert vnz.ELLIOTT_SL_CAP_ATR == pytest.approx(2.0)
         assert vnz.PENDING_MAX_CANDLES == 12
-        assert vnz.BOT_VERSION == "EL2.4.3" and panel.BOT_VERSION == "EL2.4.3"
+        assert vnz.BOT_VERSION == "EL2.4.4" and panel.BOT_VERSION == "EL2.4.4"
 
     def test_cap_math(self):
         """وقف بنيوي أوسع من 2×ATR15 يُقص؛ أضيق يبقى."""
@@ -265,6 +265,6 @@ class TestElliottSlCap:
 class TestPanelTransparency:
     def test_panel_documents_lessons(self):
         html = panel.PANEL_HTML
-        assert "EL2.4.3" in html or panel.BOT_VERSION == "EL2.4.3"
+        assert "EL2.4.4" in html or panel.BOT_VERSION == "EL2.4.4"
         # أوامر الارتداد والتتبع والسقف موثقة للوحة لا مخفية
         assert "ارتدادي" in html or "دروس الباك تاست" in html

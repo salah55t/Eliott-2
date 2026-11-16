@@ -191,6 +191,32 @@ VARIANTS: Dict[str, Dict[str, Any]] = {
                       "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
                       "trail": {"atr": 1.0}},
             "elliott": {"sl_cap_atr": 2.0, "pending_candles": 14}},
+    # ── حملة إصلاح 1116 (تشخيص خسارة الحي): بوابة النطاق الموثقة BT3.1.0 + العنقود ──
+    # R1 = إنتاج N4 + بوابة نطاق بيتك 1h للموجات (W2 — «لا موجات والسوق الأم هابط»)
+    "R1": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 12,
+                       "regime_gate": True}},
+    # R2 = R1 + سقف العنقود 2 (كان 3) — علاج عنقود 04 نوفمبر (-70.83$ في 30د)
+    "R2": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 12,
+                       "regime_gate": True, "cluster_max": 2}},
+    # R3 = العنقود وحده (عزل أثر بوابة النطاق)
+    "R3": {"scalp": {"di_gate": True, "htf_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 12,
+                       "cluster_max": 2}},
+    # ── جولة 2: مبدأ السوق الأم على المحركين معًا ──
+    # R4 = R2 + بوابة نطاق بيتك للسكالب (سكالب 15 نوفمبر حصل وهو بيتك هابط)
+    "R4": {"scalp": {"di_gate": True, "htf_gate": True, "regime_gate": True,
+                     "retrace": {"atr": 0.60, "expiry": 8, "confirm": True},
+                     "trail": {"atr": 1.0}},
+           "elliott": {"sl_cap_atr": 2.0, "pending_candles": 12,
+                       "regime_gate": True, "cluster_max": 2}},
 }
 
 
@@ -324,10 +350,12 @@ class HTF1h:
 
 class LabScalpSim(bt.ScalpSim):
     def __init__(self, book: bt.Book, stats: Dict[str, Any], var: Dict[str, Any],
-                 htf_map: Dict[str, HTF1h]):
+                 htf_map: Dict[str, HTF1h],
+                 btc_htf: Optional["HTF1h"] = None):
         super().__init__(book, stats)
         self.var = var or {}
         self.htf_map = htf_map
+        self.btc_htf = btc_htf
         self.orders: Dict[str, Dict[str, Any]] = {}      # أوامر ارتدادية معلقة
         self.loss_streak: Dict[str, int] = {}
         if self.var.get("min_rr1"):
@@ -481,6 +509,12 @@ class LabScalpSim(bt.ScalpSim):
             if not st1 or st1.get("dir") != 1.0:
                 gates["htf"] = gates.get("htf", 0) + 1
                 return
+        # بوابة نطاق السوق للسكالب (مبدأ السوق الأم نفسه — جولة 2 من حملة 1116)
+        if self.var.get("regime_gate") and self.btc_htf is not None:
+            stb = self.btc_htf.st
+            if not stb or stb.get("dir") != 1.0:
+                gates["regime"] = gates.get("regime", 0) + 1
+                return
         entry_ref = float(c["close"])
         ret = self.var.get("retrace")
         if ret:
@@ -519,10 +553,12 @@ class LabScalpSim(bt.ScalpSim):
 
 class LabElliottSim(bt.ElliottSim):
     def __init__(self, book: bt.Book, stats: Dict[str, Any], flow_filter_on: bool,
-                 symbols: List[str], var: Dict[str, Any], htf_map: Dict[str, HTF1h]):
+                 symbols: List[str], var: Dict[str, Any], htf_map: Dict[str, HTF1h],
+                 btc_htf: Optional["HTF1h"] = None):
         super().__init__(book, stats, flow_filter_on, symbols)
         self.var = var or {}
         self.htf_map = htf_map
+        self.btc_htf = btc_htf
         self.atr15_map: Dict[str, Optional[float]] = {}
         self._pending_candles = int(self.var.get("pending_candles") or bt.PENDING_MAX_CANDLES)
         self._tp_min_rr = float(self.var.get("tp_min_rr") or bt.TP_MIN_RR)
@@ -582,6 +618,14 @@ class LabElliottSim(bt.ElliottSim):
 
     def detect(self, sym: str, t_ms: int, df15: pd.DataFrame, rows5: List[dict],
                week_hi: Optional[float], busy_extra: Optional[set] = None) -> None:
+        # بوابة نطاق السوق (BT3.1.0/W2): السوق الأم بيتك SuperTrend(10,3.0) 1h —
+        # «لا موجات طويلة والسوق الأم هابط» — الفائز الموثق على 4 فترات × نظامين سعريين
+        if self.var.get("regime_gate") and self.btc_htf is not None:
+            st = self.btc_htf.st
+            if not st or st.get("dir") != 1.0:
+                g = self.stats.setdefault("ell_gates", {})
+                g["regime"] = g.get("regime", 0) + 1
+                return
         # انحياز الفريم الأعلى — قبل سلسلة القبول (بنية → تدفق → انحياز 1h)
         if self.var.get("htf_gate"):
             st1 = (self.htf_map.get(sym).st if self.htf_map.get(sym) else None)
@@ -638,6 +682,10 @@ def run_lab(args) -> Dict[str, Any]:
         bt.RR_NET_MIN = float(el_var["rr_min"])
     if el_var.get("pending_candles"):
         bt.PENDING_MAX_CANDLES = int(el_var["pending_candles"])
+    if el_var.get("cluster_max"):
+        # رافعة سقف العنقود الاتجاهي (ثابت إنتاج CLUSTER_MAX_SAME_DIRECTION=3) —
+        # لكل عملية مختبر منفصلة فالتعديل آمن
+        bt.CLUSTER_MAX_SAME_DIRECTION = int(el_var["cluster_max"])
 
     t0_wall = time.time()
     symbols = bt.load_symbols(args.symbols)
@@ -656,6 +704,15 @@ def run_lab(args) -> Dict[str, Any]:
     print(f"═" * 78)
 
     ds = LabDataStore(refresh=args.refresh)
+    # بوابة نطاق السوق (regime_gate): السلسلة الشاملة لبيتك SuperTrend(10,3.0) 1h —
+    # تُبنى من كاش 5m لبيتك وتتقدم في الحلقة عند حدود الساعة فقط
+    btc_htf: Optional[HTF1h] = None
+    if el_var.get("regime_gate"):
+        df_btc5 = ds.fetch("BTC/USDT", "5m", fetch_days, end_ms)
+        if len(df_btc5) < 200:
+            raise SystemExit("بوابة النطاق تتطلب شموع بيتك 5m — البيانات غير كافية")
+        btc_htf = HTF1h(df_btc5)
+        print(f"  [بوابة النطاق] بيتك SuperTrend(10,3.0) 1h — {len(btc_htf.ends)} شمعة ساعة")
     data: Dict[str, Dict[str, Any]] = {}
     for i, sym in enumerate(symbols, 1):
         df5 = ds.fetch(sym, "5m", fetch_days, end_ms)
@@ -697,10 +754,12 @@ def run_lab(args) -> Dict[str, Any]:
     book = bt.Book(args.balance)
     scalp_syms = symbols[:args.scalp_symbols]
     scalp = LabScalpSim(book, stats, sc_var,
-                        {s: data[s]["htf"] for s in symbols}) if not args.elliott_only else None
+                        {s: data[s]["htf"] for s in symbols},
+                        btc_htf=btc_htf) if not args.elliott_only else None
     elliott = LabElliottSim(book, stats, flow_filter_on=not args.no_flow_filter,
                             symbols=symbols, var=el_var,
-                            htf_map={s: data[s]["htf"] for s in symbols}
+                            htf_map={s: data[s]["htf"] for s in symbols},
+                            btc_htf=btc_htf
                             ) if not args.scalp_only else None
 
     dq5: Dict[str, deque] = {s: deque(maxlen=220) for s in symbols}
@@ -720,6 +779,8 @@ def run_lab(args) -> Dict[str, Any]:
             d = data[sym]
             if d["htf"] is not None and hour_boundary:
                 d["htf"].advance(T)
+            if btc_htf is not None and hour_boundary:
+                btc_htf.advance(T)
             j = d["idx5"].get(T - bt.TF_SEC["5m"] * 1000)
             if j is None:
                 continue
